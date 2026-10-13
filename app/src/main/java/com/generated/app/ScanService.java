@@ -174,10 +174,12 @@ public class ScanService extends Service {
                             broadcastFileFound(entry);
                         }
                         DiagnosticReporter.log("הסריקה הסתיימה בהצלחה דרך מערכת הקבצים. נמצאו " + foundEntries.size() + " פריטים.");
-                    } else {
-                        // 2. If filesystem yields zero entries, it must NOT count as success.
-                        // Automatically run signature carving scan and inform user/log.
-                        DiagnosticReporter.log("מערכת הקבצים לא מצאה קבצים (נמצאו 0 קבצים). מפעיל סריקת חתימות עמוקה (Deep Scan / Carving)...");
+                    }
+
+                    // Rule 2: If filesystem scan returns zero files, it must NOT count as success.
+                    // Automatically run signature carving scan and inform user/log.
+                    if (foundEntries.isEmpty()) {
+                        DiagnosticReporter.log("Filesystem scan found no files, running deep scan");
                         broadcastProgress(0, 0, "Filesystem scan found no files, running deep scan");
 
                         carver.carve(byteSource, new CarverCallback() {
