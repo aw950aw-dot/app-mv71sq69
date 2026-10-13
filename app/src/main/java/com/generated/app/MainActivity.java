@@ -1,8 +1,13 @@
 package com.generated.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.Cursor;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
@@ -13,6 +18,10 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+
 public class MainActivity extends Activity {
 
     private static final int REQUEST_CODE_OPEN_DOCUMENT = 1001;
@@ -22,6 +31,7 @@ public class MainActivity extends Activity {
     private Button btnStartScan;
     private ByteSource currentByteSource;
     private Uri currentUri;
+    private UsbDevice currentUsbDevice;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,6 +71,19 @@ public class MainActivity extends Activity {
         );
         btnParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         rootLayout.addView(btnSelect, btnParams);
+
+        Button btnSelectUsb = new Button(this);
+        btnSelectUsb.setText(R.string.select_usb_device);
+        btnSelectUsb.setTextColor(0xFFFFFFFF);
+        btnSelectUsb.setBackgroundColor(0xFF00838F);
+        btnSelectUsb.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
+        
+        LinearLayout.LayoutParams usbParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        usbParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        rootLayout.addView(btnSelectUsb, usbParams);
 
         btnStartScan = new Button(this);
         btnStartScan.setText(R.string.start_scan);
@@ -111,12 +134,24 @@ public class MainActivity extends Activity {
             }
         });
 
+        btnSelectUsb.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openUsbDeviceSelector();
+            }
+        });
+
         btnStartScan.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 if (currentUri != null) {
                     Intent intent = new Intent(MainActivity.this, ScanActivity.class);
                     intent.putExtra(ScanActivity.EXTRA_URI, currentUri);
+                    startActivity(intent);
+                } else if (currentUsbDevice != null) {
+                    // Pass device name or identifier via intent bundle, ScanActivity handles UsbSource if uri is null and usb device is present
+                    Intent intent = new Intent(MainActivity.this, ScanActivity.class);
+                    intent.putExtra(ScanActivity.EXTRA_USB_DEVICE_NAME, currentUsbDevice.getDeviceName());
                     startActivity(intent);
                 }
             }
@@ -135,6 +170,74 @@ public class MainActivity extends Activity {
             startActivityForResult(intent, REQUEST_CODE_OPEN_DOCUMENT);
         } catch (Exception e) {
             Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void openUsbDeviceSelector() {
+        UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+        HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+        
+        final List<UsbDevice> validDevices = new ArrayList<>();
+        for (UsbDevice device : deviceList.values()) {
+            boolean isMassStorage = false;
+            for (int i = 0; i < device.getInterfaceCount(); i++) {
+                android.hardware.usb.UsbInterface intf = device.getInterface(i);
+                if (intf.getInterfaceClass() == 0x08) {
+                    isMassStorage = true;
+                    break;
+                }
+            }
+            if (isMassStorage || device.getInterfaceCount() > 0) {
+                validDevices.add(device);
+            }
+        }
+
+        if (validDevices.isEmpty()) {
+            Toast.makeText(this, R.string.no_usb_device_found, Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        final String[] deviceNames = new String[validDevices.size()];
+        for (int i = 0; i < validDevices.size(); i++) {
+            UsbDevice d = validDevices.get(i);
+            deviceNames[i] = (d.getProductName() != null ? d.getProductName() : "USB Device") + " (ID: " + d.getDeviceId() + ")";
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.select_usb_device)
+                .setItems(deviceNames, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        loadUsbDevice(validDevices.get(which));
+                    }
+                })
+                .show();
+    }
+
+    private void loadUsbDevice(UsbDevice device) {
+        if (currentByteSource != null) {
+            currentByteSource.close();
+            currentByteSource = null;
+        }
+
+        try {
+            currentUri = null;
+            currentUsbDevice = device;
+            currentByteSource = new UsbMassStorageSource(this, device);
+            
+            String displayName = device.getProductName() != null ? device.getProductName() : "USB Storage";
+            long size = currentByteSource.getSize();
+
+            tvFileName.setText(getString(R.string.file_name_label) + displayName);
+            tvFileSize.setText(getString(R.string.file_size_label) + formatSize(size));
+            btnStartScan.setEnabled(true);
+
+        } catch (Exception e) {
+            currentUsbDevice = null;
+            Toast.makeText(this, R.string.error_opening_usb, Toast.LENGTH_LONG).show();
+            tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
+            tvFileSize.setText(getString(R.string.file_size_label) + "-");
+            btnStartScan.setEnabled(false);
         }
     }
 
@@ -159,6 +262,7 @@ public class MainActivity extends Activity {
 
         try {
             currentUri = uri;
+            currentUsbDevice = null;
             currentByteSource = new FileImageSource(getContentResolver(), uri);
             
             String displayName = getOriginalFileName(uri);

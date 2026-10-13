@@ -1,10 +1,13 @@
 <resources>
     <string name="app_name">SD Rescue</string>
     <string name="select_image_file">בחר קובץ אימג׳</string>
-    <string name="no_file_selected">לא נבחר קובץ</string>
-    <string name="file_name_label">שם הקובץ: </string>
-    <string name="file_size_label">גודל הקובץ: </string>
-    <string name="error_opening_file">שגיאה בפתיחת הקובץ</string>
+    <string name="select_usb_device">בחר התקן USB / כרטיס זיכרון</string>
+    <string name="no_usb_device_found">לא נמצאו התקני USB מחוברים</string>
+    <string name="error_opening_usb">שגיאה בפתיחת התקן ה-USB</string>
+    <string name="no_file_selected">לא נבחר מקור סריקה</string>
+    <string name="file_name_label">שם המקור: </string>
+    <string name="file_size_label">גודל המקור: </string>
+    <string name="error_opening_file">שגיאה בפתיחת המקור</string>
     <string name="start_scan">התחל סריקה ושחזור</string>
     <string name="scanning_title">סורק קבצים…</string>
     <string name="cancel_scan">ביטול סריקה</string>

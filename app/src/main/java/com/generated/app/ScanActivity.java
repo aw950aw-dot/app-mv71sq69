@@ -2,10 +2,12 @@ package com.generated.app;
 
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Color;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -24,17 +26,19 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 public class ScanActivity extends Activity {
 
     public static final String EXTRA_URI = "extra_uri";
+    public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
     private static final int REQUEST_CODE_SAVE_DIR = 2002;
 
     private Uri sourceUri;
+    private String usbDeviceName;
     private ByteSource byteSource;
     private Carver carver;
 
@@ -65,14 +69,32 @@ public class ScanActivity extends Activity {
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
-        if (sourceUri == null) {
+        usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
+
+        if (sourceUri == null && usbDeviceName == null) {
             Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
 
         try {
-            byteSource = new FileImageSource(getContentResolver(), sourceUri);
+            if (sourceUri != null) {
+                byteSource = new FileImageSource(getContentResolver(), sourceUri);
+            } else {
+                UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+                HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+                UsbDevice targetDevice = null;
+                for (UsbDevice d : deviceList.values()) {
+                    if (d.getDeviceName().equals(usbDeviceName)) {
+                        targetDevice = d;
+                        break;
+                    }
+                }
+                if (targetDevice == null) {
+                    throw new Exception("USB device not found");
+                }
+                byteSource = new UsbMassStorageSource(this, targetDevice);
+            }
         } catch (Exception e) {
             Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
             finish();
@@ -357,10 +379,6 @@ public class ScanActivity extends Activity {
             if (data != null) {
                 Uri treeUri = data.getData();
                 if (treeUri != null) {
-                    // Check if destination might be source (basic check on string/path)
-                    if (sourceUri.toString().equals(treeUri.toString()) || (sourceUri.getPath() != null && treeUri.getPath() != null && sourceUri.getPath().equals(treeUri.getPath()))) {
-                        Toast.makeText(this, R.string.warning_same_source, Toast.LENGTH_LONG).show();
-                    }
                     saveFilesToDirectory(treeUri, saveAllModeFlag);
                 }
             }
@@ -523,10 +541,8 @@ public class ScanActivity extends Activity {
             holder.tvName.setText(cf.getType().getName() + " • אופסט: " + cf.getOffset());
             holder.tvDetails.setText("גודל: " + formatSize(cf.getLength()));
 
-            // Thumbnail loading for JPEG/PNG if possible
             holder.ivThumb.setImageBitmap(null);
             if (cf.getType() == FileType.JPEG || cf.getType() == FileType.PNG) {
-                // Try decoding a small thumbnail sample
                 try {
                     byte[] thumbBuf = new byte[(int) Math.min(cf.getLength(), 65536)];
                     int read = byteSource.readAt(cf.getOffset(), thumbBuf, thumbBuf.length);
