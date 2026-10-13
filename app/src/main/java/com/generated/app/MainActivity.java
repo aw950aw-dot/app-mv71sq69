@@ -41,8 +41,8 @@ public class MainActivity extends Activity {
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         FrameLayout rootContainer = new FrameLayout(this);
-        rootContainer.setLayoutParams(new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootContainer.setLayoutParams(new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         rootContainer.setBackgroundColor(0xFFF5F5F5);
 
         LinearLayout rootLayout = new LinearLayout(this);
