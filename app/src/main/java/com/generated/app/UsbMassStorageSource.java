@@ -153,9 +153,19 @@ public class UsbMassStorageSource implements ByteSource {
             byte[] buffer = new byte[0];
             connection.controlTransfer(bmRequestType, bRequest, wValue, wIndex, buffer, 0, 2000);
             
-            // Clear stall endpoints
-            if (epIn != null) connection.clearHalt(epIn);
-            if (epOut != null) connection.clearHalt(epOut);
+            // Clear endpoint stalls via standard control transfer if needed
+            int requestTypeOut = 0x02; // Endpoint clear feature (recipient endpoint = 2)
+            int requestClearFeature = 0x01; // CLEAR_FEATURE
+            int featureHalt = 0x00; // ENDPOINT_HALT
+            
+            if (epIn != null) {
+                int epAddr = epIn.getAddress();
+                connection.controlTransfer(requestTypeOut, requestClearFeature, featureHalt, epAddr, new byte[0], 0, 2000);
+            }
+            if (epOut != null) {
+                int epAddr = epOut.getAddress();
+                connection.controlTransfer(requestTypeOut, requestClearFeature, featureHalt, epAddr, new byte[0], 0, 2000);
+            }
         } catch (Exception ignored) {}
     }
 
