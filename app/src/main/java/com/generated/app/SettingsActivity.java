@@ -4,9 +4,11 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -50,14 +52,30 @@ public class SettingsActivity extends Activity {
         cbParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         root.addView(cbDeepScan, cbParams);
 
-        final CheckBox cbBackground = new CheckBox(this);
-        cbBackground.setText(R.string.setting_background_service);
-        cbBackground.setChecked(true);
-        cbBackground.setTextSize(16);
-        cbBackground.setPadding(cbPad, cbPad, cbPad, cbPad);
-        cbBackground.setBackgroundColor(0xFFFFFFFF);
-        cbBackground.setLayoutParams(cbParams);
-        root.addView(cbBackground);
+        TextView tvCpLabel = new TextView(this);
+        tvCpLabel.setText("קוד פייג׳ לשמות קצרים (8.3):");
+        tvCpLabel.setTextSize(15);
+        tvCpLabel.setTextColor(0xFF333333);
+        root.addView(tvCpLabel);
+
+        final Spinner spinnerCp = new Spinner(this);
+        String[] cpOptions = new String[]{"CP437", "CP862", "Windows-1255"};
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, cpOptions);
+        spinnerCp.setAdapter(adapter);
+        
+        String current = CodepageDecoder.getCodepage();
+        for (int i = 0; i < cpOptions.length; i++) {
+            if (cpOptions[i].equalsIgnoreCase(current)) {
+                spinnerCp.setSelection(i);
+                break;
+            }
+        }
+        LinearLayout.LayoutParams spinParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        spinParams.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
+        root.addView(spinnerCp, spinParams);
 
         Button btnSave = new Button(this);
         btnSave.setText(R.string.save_settings);
@@ -70,10 +88,11 @@ public class SettingsActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        btnParams.topMargin = (int) (24 * getResources().getDisplayMetrics().density);
         btnSave.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                String selectedCp = (String) spinnerCp.getSelectedItem();
+                CodepageDecoder.setCodepage(selectedCp);
                 Toast.makeText(SettingsActivity.this, R.string.saved_success, Toast.LENGTH_SHORT).show();
                 finish();
             }

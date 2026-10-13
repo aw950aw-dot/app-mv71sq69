@@ -7,8 +7,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class FilesystemParser {
@@ -44,7 +47,6 @@ public class FilesystemParser {
             }
         }
 
-        // 1. Try normal primary boot sector at partitionOffset (or offset 0)
         byte[] bootSector = new byte[512];
         if (source.readAt(partitionOffset, bootSector, 512) == 512) {
             if (isFat32(bootSector)) {
@@ -70,23 +72,17 @@ public class FilesystemParser {
             }
         }
 
-        // 2. Corrupt boot sector recovery: Try backup boot sectors and backup FAT
-        // FAT32 backup boot sector is typically sector 6; exFAT backup boot sector is sector 12.
-        logData("Boot sector corrupt or unrecognized. Trying backup boot sectors and alternate FAT tables...");
-
-        // Try FAT32 backup boot sector (sector 6 = offset 3072 or partitionOffset + 3072)
         long[] fat32BackupOffsets = { partitionOffset + 6 * 512, 6 * 512, partitionOffset + 3072, 3072 };
         for (long off : fat32BackupOffsets) {
             if (off >= 0 && off + 512 <= totalSize) {
                 if (source.readAt(off, bootSector, 512) == 512 && isFat32(bootSector)) {
-                    recoveryMethodUsed = "שחזור מקטע איתحול מגובי (Backup Boot Sector FAT32)";
+                    recoveryMethodUsed = "שחזור מקטע איתחול מגובי (Backup Boot Sector FAT32)";
                     List<RecoveredEntry> entries = parseFat32(source, off, bootSector, true);
                     if (!entries.isEmpty()) return entries;
                 }
             }
         }
 
-        // Try exFAT backup boot sector (sector 12 = offset 6144)
         long[] exFatBackupOffsets = { partitionOffset + 12 * 512, 12 * 512, partitionOffset + 6144, 6144 };
         for (long off : exFatBackupOffsets) {
             if (off >= 0 && off + 512 <= totalSize) {
@@ -98,9 +94,7 @@ public class FilesystemParser {
             }
         }
 
-        // 3. Scan for boot sector signatures across the device if partition table is missing or corrupt
-        logData("Partition table or boot sectors missing. Scanning storage for FAT32/exFAT signatures...");
-        long scanStep = 64 * 512; // 32KB steps
+        long scanStep = 64 * 512;
         for (long pos = 0; pos < totalSize; pos += scanStep) {
             if (source.readAt(pos, bootSector, 512) == 512) {
                 if (isFat32(bootSector)) {
@@ -118,10 +112,6 @@ public class FilesystemParser {
         return new ArrayList<>();
     }
 
-    private static void logData(String msg) {
-        Log.d(TAG, msg);
-    }
-
     private static boolean isFat32(byte[] boot) {
         try {
             int bytesPerSector = ByteBuffer.wrap(boot, 11, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
@@ -130,15 +120,12 @@ public class FilesystemParser {
             }
             int sectorsPerCluster = boot[13] & 0xFF;
             if (sectorsPerCluster == 0 || (sectorsPerCluster & (sectorsPerCluster - 1)) != 0) {
-                return false; // must be power of 2
+                return false;
             }
             int fatSize16 = ByteBuffer.wrap(boot, 22, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
             long totalSectors32 = ByteBuffer.wrap(boot, 32, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xFFFFFFFFL;
-            
-            // FAT32 signature check or file system type string
             String fsType = new String(boot, 82, 8, StandardCharsets.US_ASCII);
             boolean hasFat32Str = fsType.contains("FAT32");
-
             return fatSize16 == 0 && totalSectors32 > 0 && (hasFat32Str || boot[66] == 0x29 || boot[66] == 0x28);
         } catch (Exception e) {
             return false;
@@ -152,6 +139,51 @@ public class FilesystemParser {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    public static List<RecoveredEntry> buildTree(List<RecoveredEntry> flatEntries) {
+        RecoveredEntry root = new RecoveredEntry("", "/", 0, 0, null, false, true, 0, new byte[0]);
+        Map<String, RecoveredEntry> dirMap = new HashMap<>();
+        dirMap.put("/", root);
+
+        for (RecoveredEntry entry : flatEntries) {
+            String parentPath = entry.getPath();
+            if (parentPath == null || parentPath.isEmpty()) parentPath = "/";
+            if (!parentPath.startsWith("/")) parentPath = "/" + parentPath;
+
+            RecoveredEntry parentDir = dirMap.get(parentPath);
+            if (parentDir == null) {
+                parentDir = ensureDirectoryPath(root, dirMap, parentPath);
+            }
+            parentDir.addChild(entry);
+            if (entry.isDirectory()) {
+                String fullDirPath = parentPath.equals("/") ? "/" + entry.getName() : parentPath + "/" + entry.getName();
+                dirMap.put(fullDirPath, entry);
+            }
+        }
+        root.updateSelectionStateFromChildren();
+        List<RecoveredEntry> result = new ArrayList<>();
+        result.add(root);
+        return result;
+    }
+
+    private static RecoveredEntry ensureDirectoryPath(RecoveredEntry root, Map<String, RecoveredEntry> dirMap, String path) {
+        String[] parts = path.split("/");
+        RecoveredEntry current = root;
+        StringBuilder currentPath = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) continue;
+            currentPath.append("/").append(part);
+            String pStr = currentPath.toString();
+            RecoveredEntry existing = dirMap.get(pStr);
+            if (existing == null) {
+                existing = new RecoveredEntry(part, current.getPath(), 0, 0, null, false, true, System.currentTimeMillis(), part.getBytes(StandardCharsets.UTF_8));
+                current.addChild(existing);
+                dirMap.put(pStr, existing);
+            }
+            current = existing;
+        }
+        return current;
     }
 
     private static List<RecoveredEntry> parseFat32(ByteSource source, long partOffset, byte[] boot, boolean useSecondFatCopy) throws IOException {
@@ -180,7 +212,7 @@ public class FilesystemParser {
 
             long fatStartOffset = partOffset + (long) reservedSectorCount * bytesPerSector;
             if (useSecondFatCopy && fatCount > 1) {
-                fatStartOffset += fatSize32 * bytesPerSector; // Switch to 2nd FAT copy if first is damaged
+                fatStartOffset += fatSize32 * bytesPerSector;
                 recoveryMethodUsed += " (משתמש בטבלת FAT שנייה מגובה)";
             }
 
@@ -193,7 +225,7 @@ public class FilesystemParser {
 
             traverseFat32Directory(source, clusterRegionStart, clusterSize, rootCluster, fatTable, "/", entries, new HashSet<Long>());
         } catch (Exception e) {
-            logData("Error parsing FAT32: " + e.getMessage());
+            Log.d(TAG, "Error parsing FAT32: " + e.getMessage());
         }
         return entries;
     }
@@ -202,8 +234,10 @@ public class FilesystemParser {
         long currentCluster = startCluster;
         int maxClusters = 2000;
 
+        List<Fat32LfnItem> lfnBuffer = new ArrayList<>();
+
         while (currentCluster >= 2 && currentCluster < 0x0FFFFFF8 && maxClusters-- > 0) {
-            if (!visitedClusters.add(currentCluster)) break; // prevent infinite loops in damaged chains
+            if (!visitedClusters.add(currentCluster)) break;
 
             long clusterOffset = clusterRegionStart + (currentCluster - 2) * clusterSize;
             if (clusterOffset < 0 || clusterOffset + clusterSize > source.getSize()) break;
@@ -212,53 +246,57 @@ public class FilesystemParser {
             int read = source.readAt(clusterOffset, clusterData, (int) clusterSize);
             if (read <= 0) break;
 
-            String pendingLfn = "";
             for (int i = 0; i < read - 31; i += 32) {
                 byte firstByte = clusterData[i];
-                if (firstByte == 0x00) break; // end of directory
-                
-                // CRITICAL UPDATE: Skip deleted files (0xE5). Focus ONLY on existing/healthy files.
+                if (firstByte == 0x00) break;
+
                 if (firstByte == (byte) 0xE5) {
-                    pendingLfn = "";
+                    lfnBuffer.clear();
                     continue;
                 }
 
                 int attr = clusterData[i + 11] & 0xFF;
                 if ((attr & 0x08) != 0) { // Volume ID
-                    pendingLfn = "";
+                    lfnBuffer.clear();
                     continue;
                 }
 
                 if ((attr & 0x0F) == 0x0F) { // LFN entry
-                    String lfnPart = extractFat32Lfn(clusterData, i);
-                    pendingLfn = lfnPart + pendingLfn;
+                    lfnBuffer.add(new Fat32LfnItem(clusterData, i));
                     continue;
                 }
 
                 boolean isDir = (attr & 0x10) != 0;
-                String shortName = extractFat32ShortName(clusterData, i);
-                String fileName = !pendingLfn.isEmpty() ? pendingLfn : shortName;
-                pendingLfn = "";
+                String shortName = CodepageDecoder.decode83(clusterData, i, 11);
+                
+                // Assemble LFN with validation
+                String resolvedName = assembleAndValidateFat32Lfn(lfnBuffer, shortName);
+                lfnBuffer.clear();
 
-                if (fileName.equals(".") || fileName.equals("..") || fileName.isEmpty()) continue;
+                if (resolvedName.equals(".") || resolvedName.equals("..") || resolvedName.isEmpty()) continue;
 
                 int clusterHigh = ByteBuffer.wrap(clusterData, i + 20, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
                 int clusterLow = ByteBuffer.wrap(clusterData, i + 26, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
                 long fileCluster = ((long) clusterHigh << 16) | clusterLow;
                 long fileLength = ByteBuffer.wrap(clusterData, i + 28, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xFFFFFFFFL;
 
-                if (fileCluster >= 2) {
+                int timeField = ByteBuffer.wrap(clusterData, i + 22, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
+                int dateField = ByteBuffer.wrap(clusterData, i + 24, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
+                long modTime = decodeDosDateTime(dateField, timeField);
+
+                byte[] rawNameBytes = new byte[11];
+                System.arraycopy(clusterData, i, rawNameBytes, 0, 11);
+
+                if (fileCluster >= 2 || isDir) {
                     long fileDataOffset = clusterRegionStart + (fileCluster - 2) * clusterSize;
-                    if (fileDataOffset >= 0 && fileDataOffset < source.getSize()) {
-                        FileType type = FileTypeDetector.detectTypeByNameOrHeader(source, fileName, fileDataOffset, fileLength);
-                        String fullPath = currentPath.equals("/") ? "/" + fileName : currentPath + "/" + fileName;
+                    FileType type = isDir ? null : FileTypeDetector.detectTypeByNameOrHeader(source, resolvedName, fileDataOffset, fileLength);
+                    String fullPath = currentPath;
 
-                        // Only add existing (not deleted) files
-                        entries.add(new RecoveredEntry(fileName, currentPath, fileDataOffset, fileLength, type, false, isDir));
+                    entries.add(new RecoveredEntry(resolvedName, fullPath, fileDataOffset, fileLength, type, false, isDir, modTime, rawNameBytes));
 
-                        if (isDir && fileCluster != startCluster) {
-                            traverseFat32Directory(source, clusterRegionStart, clusterSize, fileCluster, fatTable, fullPath, entries, new HashSet<>(visitedClusters));
-                        }
+                    if (isDir && fileCluster >= 2 && fileCluster != startCluster) {
+                        String subPath = currentPath.equals("/") ? "/" + resolvedName : currentPath + "/" + resolvedName;
+                        traverseFat32Directory(source, clusterRegionStart, clusterSize, fileCluster, fatTable, subPath, entries, new HashSet<>(visitedClusters));
                     }
                 }
             }
@@ -267,39 +305,73 @@ public class FilesystemParser {
         }
     }
 
+    private static class Fat32LfnItem {
+        int sequenceNumber;
+        byte[] data = new byte[32];
+        Fat32LfnItem(byte[] buf, int offset) {
+            System.arraycopy(buf, offset, data, 0, 32);
+            this.sequenceNumber = data[0] & 0xFF;
+        }
+    }
+
+    private static String assembleAndValidateFat32Lfn(List<Fat32LfnItem> lfnList, String shortName) {
+        if (lfnList == null || lfnList.isEmpty()) return shortName;
+
+        // Sort by sequence number (masked with 0x40 for last entry)
+        // Reconstruct UTF-16LE characters from 13 chars per entry across the 3 fields
+        StringBuilder sb = new StringBuilder();
+        // Simple robust assembler
+        for (int i = lfnList.size() - 1; i >= 0; i--) {
+            byte[] buf = lfnList.get(i).data;
+            int[] indices = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
+            for (int idx : indices) {
+                char c = (char) ByteBuffer.wrap(buf, idx, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
+                if (c == 0 || c == 0xFFFF) break;
+                sb.append(c);
+            }
+        }
+
+        String lfn = sb.toString().trim();
+        if (lfn.isEmpty()) return shortName;
+
+        // Checksum validation against short name
+        byte checksum = computeFat32Checksum(shortName);
+        boolean checksumValid = true;
+        for (Fat32LfnItem item : lfnList) {
+            byte itemChk = item.data[13];
+            if (itemChk != checksum) {
+                checksumValid = false;
+                break;
+            }
+        }
+
+        if (!checksumValid) {
+            return shortName; // fallback to short name if checksum mismatch (orphaned or damaged LFN)
+        }
+
+        return lfn;
+    }
+
+    private static byte computeFat32Checksum(String shortName) {
+        byte sum = 0;
+        // Pad short name to 11 chars
+        String padded = shortName;
+        if (!padded.contains(".")) {
+            padded = padded + "           ";
+        }
+        if (padded.length() > 11) padded = padded.substring(0, 11);
+        while (padded.length() < 11) padded = padded + " ";
+        
+        for (int i = 0; i < 11; i++) {
+            sum = (byte) (((sum & 1) << 7) + (sum >> 1) + (padded.charAt(i) & 0xFF));
+        }
+        return sum;
+    }
+
     private static long getNextFat32Cluster(byte[] fatTable, long cluster) {
         int index = (int) (cluster * 4);
         if (index + 4 > fatTable.length) return 0x0FFFFFFF;
         return ByteBuffer.wrap(fatTable, index, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0x0FFFFFFF;
-    }
-
-    private static String extractFat32ShortName(byte[] buf, int offset) {
-        StringBuilder name = new StringBuilder();
-        StringBuilder ext = new StringBuilder();
-        for (int i = 0; i < 8; i++) {
-            char c = (char) buf[offset + i];
-            if (c != ' ' && c != 0) name.append(c);
-        }
-        for (int i = 8; i < 11; i++) {
-            char c = (char) buf[offset + i];
-            if (c != ' ' && c != 0) ext.append(c);
-        }
-        if (ext.length() > 0) {
-            return name.toString().toLowerCase() + "." + ext.toString().toLowerCase();
-        }
-        return name.toString().toLowerCase();
-    }
-
-    private static String extractFat32Lfn(byte[] buf, int offset) {
-        StringBuilder sb = new StringBuilder();
-        int[] indices = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
-        for (int idx : indices) {
-            if (offset + idx + 2 > buf.length) break;
-            char c = (char) ByteBuffer.wrap(buf, offset + idx, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
-            if (c == 0 || c == 0xFFFF) break;
-            sb.append(c);
-        }
-        return sb.toString();
     }
 
     private static List<RecoveredEntry> parseExFat(ByteSource source, long partOffset, byte[] boot, boolean isBackup) throws IOException {
@@ -309,7 +381,7 @@ public class FilesystemParser {
             b.order(ByteOrder.LITTLE_ENDIAN);
 
             int bytesPerSectorShift = b.get(109) & 0xFF;
-            if (bytesPerSectorShift < 9 || bytesPerSectorShift > 12) bytesPerSectorShift = 9; // 512 bytes default
+            if (bytesPerSectorShift < 9 || bytesPerSectorShift > 12) bytesPerSectorShift = 9;
 
             int sectorsPerClusterShift = b.get(110) & 0xFF;
             if (sectorsPerClusterShift > 24) sectorsPerClusterShift = 3;
@@ -327,7 +399,7 @@ public class FilesystemParser {
 
             traverseExFatDirectory(source, clusterHeapStart, clusterSize, firstClusterOfRootDirectory, "/", entries);
         } catch (Exception e) {
-            logData("Error parsing exFAT: " + e.getMessage());
+            Log.d(TAG, "Error parsing exFAT: " + e.getMessage());
         }
         return entries;
     }
@@ -346,33 +418,63 @@ public class FilesystemParser {
 
             for (int i = 0; i < read - 31; i += 32) {
                 int entryType = clusterData[i] & 0xFF;
-                if (entryType == 0x00) break; // end of directory
-                
-                // CRITICAL UPDATE: Skip deleted entries (bit 7 clear for allocation status or file attributes)
-                if ((entryType & 0x80) == 0) continue; 
+                if (entryType == 0x00) break;
+                if ((entryType & 0x80) == 0) continue;
                 if (entryType != 0x85) continue; // File directory entry
 
                 if (i + 64 > read) break;
-                int nameLength = clusterData[i + 35] & 0xFF;
-                long startingCluster = ByteBuffer.wrap(clusterData, i + 52, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xFFFFFFFFL;
-                long dataLength = ByteBuffer.wrap(clusterData, i + 56, 8).order(ByteOrder.LITTLE_ENDIAN).getLong();
+                int secondaryCount = clusterData[i + 1] & 0xFF;
+                int attr = ByteBuffer.wrap(clusterData, i + 4, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
+                boolean isDir = (attr & 0x10) != 0;
 
+                long startingCluster = 0;
+                long dataLength = 0;
+                int nameLength = 0;
                 StringBuilder fileName = new StringBuilder();
-                for (int n = 0; n < nameLength && (i + 64 + 2 + n * 2 + 2) <= read; n++) {
-                    char c = (char) ByteBuffer.wrap(clusterData, i + 64 + 2 + n * 2, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
-                    if (c == 0) break;
-                    fileName.append(c);
+
+                // Read stream extension and file name entries following the 0x85 entry
+                for (int s = 1; s <= secondaryCount && (i + s * 32 + 31) < read; s++) {
+                    int secType = clusterData[i + s * 32] & 0xFF;
+                    if (secType == 0xC0) { // Stream extension
+                        startingCluster = ByteBuffer.wrap(clusterData, i + s * 32 + 20, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xFFFFFFFFL;
+                        dataLength = ByteBuffer.wrap(clusterData, i + s * 32 + 24, 8).order(ByteOrder.LITTLE_ENDIAN).getLong();
+                    } else if (secType == 0xC1) { // File name
+                        nameLength = clusterData[i + s * 32 + 3] & 0xFF;
+                        for (int n = 0; n < 15 && (i + s * 32 + 4 + n * 2 + 2) <= read; n++) {
+                            char c = (char) ByteBuffer.wrap(clusterData, i + s * 32 + 4 + n * 2, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
+                            if (c == 0) break;
+                            fileName.append(c);
+                        }
+                    }
                 }
 
                 String name = fileName.length() > 0 ? fileName.toString() : "unnamed";
                 long fileDataOffset = clusterHeapStart + (startingCluster - 2) * clusterSize;
-                
-                if (fileDataOffset >= 0 && fileDataOffset < source.getSize()) {
-                    FileType type = FileTypeDetector.detectTypeByNameOrHeader(source, name, fileDataOffset, dataLength);
-                    entries.add(new RecoveredEntry(name, currentPath, fileDataOffset, dataLength, type, false, false));
-                }
+                FileType type = isDir ? null : FileTypeDetector.detectTypeByNameOrHeader(source, name, fileDataOffset, dataLength);
+
+                byte[] rawNameBytes = name.getBytes(StandardCharsets.UTF_16LE);
+
+                entries.add(new RecoveredEntry(name, currentPath, fileDataOffset, dataLength, type, false, isDir, System.currentTimeMillis(), rawNameBytes));
             }
             break;
+        }
+    }
+
+    private static long decodeDosDateTime(int date, int time) {
+        int year = ((date >> 9) & 0x7F) + 1980;
+        int month = ((date >> 5) & 0x0F) - 1;
+        int day = date & 0x1F;
+        int hour = (time >> 11) & 0x1F;
+        int minute = (time >> 5) & 0x3F;
+        int second = (time & 0x1F) * 2;
+
+        Calendar cal = Calendar.getInstance();
+        try {
+            cal.set(year, Math.max(0, Math.min(11, month)), Math.max(1, Math.min(31, day)),
+                    Math.max(0, Math.min(23, hour)), Math.max(0, Math.min(59, minute)), Math.max(0, Math.min(59, second)));
+            return cal.getTimeInMillis();
+        } catch (Exception e) {
+            return System.currentTimeMillis();
         }
     }
 }

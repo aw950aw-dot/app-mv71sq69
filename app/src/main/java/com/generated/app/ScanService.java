@@ -168,7 +168,7 @@ public class ScanService extends Service {
                         broadcastFileFound(entry);
                     }
 
-                    // 2. FALLBACK ONLY IF FILESYSTEM YIELDED NOTHING (Unusable / Completely Damaged Filesystem)
+                    // 2. FALLBACK CARVED FILES GROUP IF FILESYSTEM YIELDED NOTHING OR ALONGSIDE CARVING
                     if (foundEntries.isEmpty()) {
                         carver.carve(byteSource, new CarverCallback() {
                             @Override
@@ -186,14 +186,18 @@ public class ScanService extends Service {
                                     }
                                 }
                                 if (!exists) {
+                                    String typeFolderName = carvedFile.getType().getName();
+                                    String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
                                     RecoveredEntry entry = new RecoveredEntry(
-                                            "carved_" + carvedFile.getOffset() + "." + carvedFile.getType().getName().toLowerCase(),
-                                            "/carved",
+                                            fileName,
+                                            "/Carved files/" + typeFolderName,
                                             carvedFile.getOffset(),
                                             carvedFile.getLength(),
                                             carvedFile.getType(),
                                             false,
-                                            false
+                                            false,
+                                            System.currentTimeMillis(),
+                                            fileName.getBytes()
                                     );
                                     foundEntries.add(entry);
                                     broadcastFileFound(entry);
@@ -236,6 +240,7 @@ public class ScanService extends Service {
         intent.putExtra("length", entry.getLength());
         intent.putExtra("type", entry.getType().name());
         intent.putExtra("is_deleted", entry.isDeleted());
+        intent.putExtra("mod_time", entry.getModifiedTime());
         sendBroadcast(intent);
     }
 
