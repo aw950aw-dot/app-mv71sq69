@@ -1,8 +1,24 @@
 <resources>
     <string name="app_name">SD Rescue</string>
-    <string name="select_image_file">בחר קובץ אימג\'</string>
+    <string name="select_image_file">בחר קובץ אימג׳</string>
     <string name="no_file_selected">לא נבחר קובץ</string>
     <string name="file_name_label">שם הקובץ: </string>
     <string name="file_size_label">גודל הקובץ: </string>
     <string name="error_opening_file">שגיאה בפתיחת הקובץ</string>
+    <string name="start_scan">התחל סריקה ושחזור</string>
+    <string name="scanning_title">סורק קבצים…</string>
+    <string name="cancel_scan">ביטול סריקה</string>
+    <string name="save_selected">שמור נבחרים</string>
+    <string name="save_all">שמור הכל</string>
+    <string name="select_all">בחר הכל</string>
+    <string name="deselect_all">בטל בחירה</string>
+    <string name="no_files_found">לא נמצאו קבצים לשחזור</string>
+    <string name="files_found_count">נמצאו %d קבצים</string>
+    <string name="scan_completed">הסריקה הסתיימה בהצלחה</string>
+    <string name="scan_cancelled">הסריקה בוטלה</string>
+    <string name="saved_success">הקבצים נשמרו בהצלחה!</string>
+    <string name="error_saving">שגיאה בשמירת הקבצים</string>
+    <string name="warning_same_source">אזהרה: נראה שבחרת תיקיית יעד זהה למקור. מומלץ לבחור תיקייה אחרת.</string>
+    <string name="progress_speed">%d%% • %.2f מ״ב/שנייה • נמצאו: %d</string>
+    <string name="file_type_prefix">סוג: </string>
 </resources>

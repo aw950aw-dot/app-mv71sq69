@@ -19,7 +19,9 @@ public class MainActivity extends Activity {
 
     private TextView tvFileName;
     private TextView tvFileSize;
+    private Button btnStartScan;
     private ByteSource currentByteSource;
+    private Uri currentUri;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,8 +59,22 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        btnParams.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
+        btnParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         rootLayout.addView(btnSelect, btnParams);
+
+        btnStartScan = new Button(this);
+        btnStartScan.setText(R.string.start_scan);
+        btnStartScan.setTextColor(0xFFFFFFFF);
+        btnStartScan.setBackgroundColor(0xFF388E3C);
+        btnStartScan.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
+        btnStartScan.setEnabled(false);
+        
+        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        scanParams.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
+        rootLayout.addView(btnStartScan, scanParams);
 
         LinearLayout cardLayout = new LinearLayout(this);
         cardLayout.setOrientation(LinearLayout.VERTICAL);
@@ -92,6 +108,17 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 openFileSelector();
+            }
+        });
+
+        btnStartScan.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (currentUri != null) {
+                    Intent intent = new Intent(MainActivity.this, ScanActivity.class);
+                    intent.putExtra(ScanActivity.EXTRA_URI, currentUri);
+                    startActivity(intent);
+                }
             }
         });
 
@@ -131,6 +158,7 @@ public class MainActivity extends Activity {
         }
 
         try {
+            currentUri = uri;
             currentByteSource = new FileImageSource(getContentResolver(), uri);
             
             String displayName = getOriginalFileName(uri);
@@ -138,11 +166,14 @@ public class MainActivity extends Activity {
 
             tvFileName.setText(getString(R.string.file_name_label) + displayName);
             tvFileSize.setText(getString(R.string.file_size_label) + formatSize(size));
+            btnStartScan.setEnabled(true);
 
         } catch (Exception e) {
+            currentUri = null;
             Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_LONG).show();
             tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
             tvFileSize.setText(getString(R.string.file_size_label) + "-");
+            btnStartScan.setEnabled(false);
         }
     }
 
