@@ -255,7 +255,30 @@ public class MainActivity extends Activity {
 
         } catch (Exception e) {
             currentUsbDevice = null;
-            Toast.makeText(this, R.string.error_opening_usb, Toast.LENGTH_LONG).show();
+            List<String> logs = UsbMassStorageSource.getDiagnosticLogs();
+            StringBuilder sb = new StringBuilder();
+            sb.append("שגיאה בפתיחת התקן USB:\n").append(e.getMessage()).append("\n\nדוח אבחון:\n");
+            for (String log : logs) {
+                sb.append(log).append("\n");
+            }
+
+            TextView tvLog = new TextView(this);
+            tvLog.setText(sb.toString());
+            tvLog.setTextSize(12);
+            tvLog.setTextColor(0xFF333333);
+            tvLog.setTextIsSelectable(true);
+            int pad = (int) (12 * getResources().getDisplayMetrics().density);
+            tvLog.setPadding(pad, pad, pad, pad);
+
+            android.widget.ScrollView sv = new android.widget.ScrollView(this);
+            sv.addView(tvLog);
+
+            new AlertDialog.Builder(this)
+                    .setTitle("דוח אבחון USB")
+                    .setView(sv)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+
             tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
             tvFileSize.setText(getString(R.string.file_size_label) + "-");
             btnStartScan.setEnabled(false);

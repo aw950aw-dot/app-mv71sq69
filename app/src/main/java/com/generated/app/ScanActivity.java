@@ -5,7 +5,6 @@ import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
@@ -49,7 +48,6 @@ public class ScanActivity extends Activity {
     private Button btnPauseResume;
     private Button btnSaveAll;
     private Button btnSaveSelected;
-    private Button btnToggleSelectAll;
     private Button btnErrorLog;
 
     private final List<RecoveredEntryHolder> entryHolders = new ArrayList<>();
@@ -317,17 +315,33 @@ public class ScanActivity extends Activity {
     }
 
     private void showErrorLogDialog() {
+        List<String> logs = UsbMassStorageSource.getDiagnosticLogs();
         StringBuilder sb = new StringBuilder();
-        if (errorLogs.isEmpty()) {
-            sb.append("לא נרשמו שגיאות קריאה במהלך הסריקה.");
+        if (logs.isEmpty() && errorLogs.isEmpty()) {
+            sb.append("לא נרשמו שגיאות קריאה או אירועי USB.");
         } else {
+            for (String log : logs) {
+                sb.append(log).append("\n");
+            }
             for (String err : errorLogs) {
                 sb.append("• ").append(err).append("\n");
             }
         }
+
+        TextView tv = new TextView(this);
+        tv.setText(sb.toString());
+        tv.setTextSize(12);
+        tv.setTextColor(0xFF333333);
+        tv.setTextIsSelectable(true);
+        int pad = (int) (12 * getResources().getDisplayMetrics().density);
+        tv.setPadding(pad, pad, pad, pad);
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(tv);
+
         new AlertDialog.Builder(this)
                 .setTitle(R.string.error_log_title)
-                .setMessage(sb.toString())
+                .setView(sv)
                 .setPositiveButton(android.R.string.ok, null)
                 .show();
     }
