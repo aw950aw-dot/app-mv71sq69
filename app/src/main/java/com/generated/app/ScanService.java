@@ -13,7 +13,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -61,7 +60,7 @@ public class ScanService extends Service {
                 return START_NOT_STICKY;
             } else if (ACTION_RESUME.equals(action)) {
                 isPaused = false;
-                updateNotification("סורק קבצים...", 0);
+                updateNotification("מחלץ קבצים...", 0);
                 return START_NOT_STICKY;
             } else if (ACTION_CANCEL.equals(action)) {
                 isCancelled = true;
@@ -99,7 +98,7 @@ public class ScanService extends Service {
 
             if (byteSource != null) {
                 carver = new Carver();
-                startForeground(NOTIFICATION_ID, createNotification("סורק קבצים...", 0));
+                startForeground(NOTIFICATION_ID, createNotification("מחלץ קבצים...", 0));
                 startScanThread();
             } else {
                 stopSelf();
@@ -158,6 +157,7 @@ public class ScanService extends Service {
             @Override
             public void run() {
                 try {
+                    // 1. PRIMARY PRIORITY: Parse filesystem normally & backup boot sectors / backup FAT
                     List<RecoveredEntry> fsEntries = FilesystemParser.parseFilesystem(byteSource);
                     for (RecoveredEntry entry : fsEntries) {
                         while (isPaused && !isCancelled) {
@@ -168,48 +168,51 @@ public class ScanService extends Service {
                         broadcastFileFound(entry);
                     }
 
-                    carver.carve(byteSource, new CarverCallback() {
-                        @Override
-                        public void onFileFound(CarvedFile carvedFile) {
-                            while (isPaused && !isCancelled) {
-                                try { Thread.sleep(500); } catch (InterruptedException e) { break; }
-                            }
-                            if (isCancelled) return;
+                    // 2. FALLBACK ONLY IF FILESYSTEM YIELDED NOTHING (Unusable / Completely Damaged Filesystem)
+                    if (foundEntries.isEmpty()) {
+                        carver.carve(byteSource, new CarverCallback() {
+                            @Override
+                            public void onFileFound(CarvedFile carvedFile) {
+                                while (isPaused && !isCancelled) {
+                                    try { Thread.sleep(500); } catch (InterruptedException e) { break; }
+                                }
+                                if (isCancelled) return;
 
-                            boolean exists = false;
-                            for (RecoveredEntry h : foundEntries) {
-                                if (Math.abs(h.getOffset() - carvedFile.getOffset()) < 4096) {
-                                    exists = true;
-                                    break;
+                                boolean exists = false;
+                                for (RecoveredEntry h : foundEntries) {
+                                    if (Math.abs(h.getOffset() - carvedFile.getOffset()) < 4096) {
+                                        exists = true;
+                                        break;
+                                    }
+                                }
+                                if (!exists) {
+                                    RecoveredEntry entry = new RecoveredEntry(
+                                            "carved_" + carvedFile.getOffset() + "." + carvedFile.getType().getName().toLowerCase(),
+                                            "/carved",
+                                            carvedFile.getOffset(),
+                                            carvedFile.getLength(),
+                                            carvedFile.getType(),
+                                            false,
+                                            false
+                                    );
+                                    foundEntries.add(entry);
+                                    broadcastFileFound(entry);
                                 }
                             }
-                            if (!exists) {
-                                RecoveredEntry entry = new RecoveredEntry(
-                                        "carved_" + carvedFile.getOffset() + "." + carvedFile.getType().getName().toLowerCase(),
-                                        "/carved",
-                                        carvedFile.getOffset(),
-                                        carvedFile.getLength(),
-                                        carvedFile.getType(),
-                                        true,
-                                        false
-                                );
-                                foundEntries.add(entry);
-                                broadcastFileFound(entry);
-                            }
-                        }
 
-                        @Override
-                        public void onProgress(long bytesScanned, long totalBytes) {
-                            while (isPaused && !isCancelled) {
-                                try { Thread.sleep(500); } catch (InterruptedException e) { break; }
-                            }
-                            if (isCancelled) return;
+                            @Override
+                            public void onProgress(long bytesScanned, long totalBytes) {
+                                while (isPaused && !isCancelled) {
+                                    try { Thread.sleep(500); } catch (InterruptedException e) { break; }
+                                }
+                                if (isCancelled) return;
 
-                            int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-                            updateNotification("סרוק: " + percent + "% • נמצאו: " + foundEntries.size(), percent);
-                            broadcastProgress(percent, foundEntries.size());
-                        }
-                    });
+                                int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
+                                updateNotification("חיתוך חתימות (Carving): " + percent + "% • נמצאו: " + foundEntries.size(), percent);
+                                broadcastProgress(percent, foundEntries.size(), "חיתוך חתימות עמוק (Carving עקב מערכת קבצים פגומה לחלוטין)");
+                            }
+                        });
+                    }
 
                 } catch (Exception e) {
                     errorLog.add("שגיאת סריקה: " + e.getMessage());
@@ -236,10 +239,11 @@ public class ScanService extends Service {
         sendBroadcast(intent);
     }
 
-    private void broadcastProgress(int percent, int count) {
+    private void broadcastProgress(int percent, int count, String method) {
         Intent intent = new Intent(ACTION_PROGRESS);
         intent.putExtra("percent", percent);
         intent.putExtra("count", count);
+        intent.putExtra("method", method);
         sendBroadcast(intent);
     }
 

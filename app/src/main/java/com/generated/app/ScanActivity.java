@@ -42,6 +42,7 @@ public class ScanActivity extends Activity {
     private ByteSource byteSource;
 
     private TextView tvStatus;
+    private TextView tvMethodUsed;
     private ProgressBar progressBar;
     private ListView listView;
     private Button btnCancel;
@@ -66,7 +67,11 @@ public class ScanActivity extends Activity {
                 int percent = intent.getIntExtra("percent", 0);
                 int count = intent.getIntExtra("count", 0);
                 progressBar.setProgress(percent * 10);
-                tvStatus.setText("סורק קבצים... (" + percent + "%) • נמצאו: " + count);
+                tvStatus.setText("מחלץ קבצים קיימים... (" + percent + "%) • נמצאו: " + count);
+                String method = intent.getStringExtra("method");
+                if (method != null && !method.isEmpty()) {
+                    tvMethodUsed.setText("שיטת שחזור: " + method);
+                }
             } else if (ScanService.ACTION_FILE_FOUND.equals(action)) {
                 String name = intent.getStringExtra("name");
                 String path = intent.getStringExtra("path");
@@ -85,6 +90,7 @@ public class ScanActivity extends Activity {
                 tvStatus.setText(R.string.scan_completed);
                 btnCancel.setText(android.R.string.ok);
                 btnPauseResume.setVisibility(View.GONE);
+                tvMethodUsed.setText("שיטת שחזור: הושלם בהצלחה (" + FilesystemParser.getRecoveryMethodUsed() + ")");
             }
         }
     };
@@ -151,8 +157,19 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        statusParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        statusParams.bottomMargin = (int) (4 * getResources().getDisplayMetrics().density);
         topCard.addView(tvStatus, statusParams);
+
+        tvMethodUsed = new TextView(this);
+        tvMethodUsed.setText("שיטת שחזור: מנתח מערכת קבצים...");
+        tvMethodUsed.setTextSize(13);
+        tvMethodUsed.setTextColor(0xFF00838F);
+        LinearLayout.LayoutParams methodParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        methodParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        topCard.addView(tvMethodUsed, methodParams);
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(1000);
@@ -317,6 +334,7 @@ public class ScanActivity extends Activity {
     private void showErrorLogDialog() {
         List<String> logs = UsbMassStorageSource.getDiagnosticLogs();
         StringBuilder sb = new StringBuilder();
+        sb.append("שיטת שחזור פעילה: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n\n");
         if (logs.isEmpty() && errorLogs.isEmpty()) {
             sb.append("לא נרשמו שגיאות קריאה או אירועי USB.");
         } else {
@@ -502,8 +520,7 @@ public class ScanActivity extends Activity {
                 }
             });
 
-            String statusTag = entry.isDeleted() ? " [מחוק]" : "";
-            holder.tvName.setText(entry.getPath() + "/" + entry.getName() + statusTag);
+            holder.tvName.setText(entry.getPath() + "/" + entry.getName());
             holder.tvDetails.setText("גודל: " + formatSize(entry.getLength()) + " • " + entry.getType().getName());
 
             holder.ivThumb.setImageBitmap(null);
