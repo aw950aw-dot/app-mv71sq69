@@ -345,7 +345,6 @@ public class ScanActivity extends Activity {
             if (currentDirectory == null) {
                 currentDirectory = rootNode;
             } else {
-                // Keep current directory if still exists in tree
                 currentDirectory = findDirectoryByPath(rootNode, currentDirectory.getName());
                 if (currentDirectory == null) currentDirectory = rootNode;
             }
@@ -497,7 +496,7 @@ public class ScanActivity extends Activity {
                     String sanitizedDirName = sanitizeFileName(node.getName());
                     currentFolderUri = DocumentsContract.createDocument(resolver, parentDirUri, DocumentsContract.Document.MIME_TYPE_DIR, sanitizedDirName);
                 } catch (Exception e) {
-                    errorLogs.append("יצירת תיקייה נכשלה: " + node.getName());
+                    errorLogs.add("יצירת תיקייה נכשלה: " + node.getName());
                     return;
                 }
             }
@@ -568,7 +567,7 @@ public class ScanActivity extends Activity {
         }
 
         @Override
-        View getView(int position, View convertView, ViewGroup parent) {
+        public View getView(int position, View convertView, ViewGroup parent) {
             LinearLayout itemLayout;
             ViewHolder holder;
 
@@ -671,7 +670,7 @@ public class ScanActivity extends Activity {
                         }
                     } catch (Exception ignored) {}
                 } else {
-                    holder.ivIcon.setImageResource(android.R.drawable.ic_menu_doc);
+                    holder.ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
                 }
 
                 holder.btnDetails.setOnClickListener(new View.OnClickListener() {
