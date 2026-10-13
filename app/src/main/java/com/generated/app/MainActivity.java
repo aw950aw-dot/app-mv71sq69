@@ -14,6 +14,7 @@ import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -39,12 +40,22 @@ public class MainActivity extends Activity {
         
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
+        FrameLayout rootContainer = new FrameLayout(this);
+        rootContainer.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootContainer.setBackgroundColor(0xFFF5F5F5);
+
         LinearLayout rootLayout = new LinearLayout(this);
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setGravity(Gravity.CENTER_HORIZONTAL);
         int padding = (int) (24 * getResources().getDisplayMetrics().density);
         rootLayout.setPadding(padding, padding, padding, padding);
-        rootLayout.setBackgroundColor(0xFFF5F5F5);
+
+        FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        );
+        rootContainer.addView(rootLayout, layoutParams);
 
         TextView tvTitle = new TextView(this);
         tvTitle.setText(R.string.app_name);
@@ -135,6 +146,21 @@ public class MainActivity extends Activity {
         tvFileSize.setTextColor(0xFF333333);
         cardLayout.addView(tvFileSize, textParams);
 
+        // Version label in the corner of the Home screen
+        TextView tvVersion = new TextView(this);
+        String buildDateTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date());
+        tvVersion.setText("v0.1 build " + buildDateTime);
+        tvVersion.setTextSize(11);
+        tvVersion.setTextColor(0xFF888888);
+        FrameLayout.LayoutParams versionParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+        );
+        versionParams.gravity = Gravity.BOTTOM | Gravity.END;
+        int cornerMargin = (int) (12 * getResources().getDisplayMetrics().density);
+        versionParams.setMargins(cornerMargin, cornerMargin, cornerMargin, cornerMargin);
+        rootContainer.addView(tvVersion, versionParams);
+
         btnSelect.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -178,7 +204,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        setContentView(rootLayout);
+        setContentView(rootContainer);
     }
 
     private void openFileSelector() {

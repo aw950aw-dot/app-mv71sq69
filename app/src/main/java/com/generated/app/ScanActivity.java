@@ -3,6 +3,8 @@ package com.generated.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -47,6 +49,8 @@ public class ScanActivity extends Activity {
     private TextView tvStatus;
     private TextView tvMethodUsed;
     private TextView tvBreadcrumb;
+    private TextView tvSummaryBox;
+    private Button btnCopyReport;
     private ProgressBar progressBar;
     private ListView listView;
     private Button btnCancel;
@@ -61,6 +65,9 @@ public class ScanActivity extends Activity {
     private TreeEntryAdapter adapter;
 
     private boolean isPaused = false;
+    private String lastReportMethod = "מנתח מערכת קבצים...";
+    private int carvedCount = 0;
+    private int fsFoundCount = 0;
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override
@@ -75,8 +82,10 @@ public class ScanActivity extends Activity {
                 tvStatus.setText("סורק קבצים... (" + percent + "%) • נמצאו: " + count);
                 String method = intent.getStringExtra("method");
                 if (method != null && !method.isEmpty()) {
+                    lastReportMethod = method;
                     tvMethodUsed.setText("שיטת שחזור: " + method);
                 }
+                updateSummaryBox();
             } else if (ScanService.ACTION_FILE_FOUND.equals(action)) {
                 String name = intent.getStringExtra("name");
                 String path = intent.getStringExtra("path");
@@ -91,12 +100,18 @@ public class ScanActivity extends Activity {
 
                 RecoveredEntry entry = new RecoveredEntry(name, path, offset, length, type, isDeleted, false, modTime, name.getBytes());
                 allFlatEntries.add(entry);
+                if (path != null && path.contains("Carved")) {
+                    carvedCount++;
+                } else {
+                    fsFoundCount++;
+                }
                 refreshTreeOnMainThread();
             } else if (ScanService.ACTION_COMPLETED.equals(action)) {
                 tvStatus.setText(R.string.scan_completed);
                 btnCancel.setText(android.R.string.ok);
                 btnPauseResume.setVisibility(View.GONE);
                 tvMethodUsed.setText("שיטת שחזור: הושלם (" + FilesystemParser.getRecoveryMethodUsed() + ")");
+                updateSummaryBox();
                 refreshTreeOnMainThread();
             }
         }
@@ -177,6 +192,45 @@ public class ScanActivity extends Activity {
         );
         methodParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
         topCard.addView(tvMethodUsed, methodParams);
+
+        // Summary box right under status/method, always visible
+        tvSummaryBox = new TextView(this);
+        tvSummaryBox.setTextSize(12);
+        tvSummaryBox.setTextColor(0xFF444444);
+        tvSummaryBox.setBackgroundColor(0xFFF1F3F4);
+        int boxPad = (int) (10 * getResources().getDisplayMetrics().density);
+        tvSummaryBox.setPadding(boxPad, boxPad, boxPad, boxPad);
+        LinearLayout.LayoutParams summaryParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        summaryParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        topCard.addView(tvSummaryBox, summaryParams);
+        updateSummaryBox();
+
+        btnCopyReport = new Button(this);
+        btnCopyReport.setText("העתק דוח (Copy report)");
+        btnCopyReport.setTextSize(12);
+        btnCopyReport.setTextColor(0xFFFFFFFF);
+        btnCopyReport.setBackgroundColor(0xFF1976D2);
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        copyParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        topCard.addView(btnCopyReport, copyParams);
+
+        btnCopyReport.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData clip = ClipData.newPlainText("Scan Report", tvSummaryBox.getText().toString());
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(clip);
+                    Toast.makeText(ScanActivity.this, "הדוח הועתק ללוח", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
 
         tvBreadcrumb = new TextView(this);
         tvBreadcrumb.setText("מיקום: /");
@@ -338,6 +392,19 @@ public class ScanActivity extends Activity {
         setContentView(root);
     }
 
+    private void updateSummaryBox() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("סיכום סריקה:\n");
+        sb.append("• שיטה בשימוש: ").append(lastReportMethod).append("\n");
+        sb.append("• מערכת קבצים זוהתה: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n");
+        sb.append("• Partition Start LBA: ").append("0").append("\n");
+        sb.append("• קבצים ותיקיות במערכת קבצים: ").append(fsFoundCount).append("\n");
+        sb.append("• קבצים שחולצו (Carved): ").append(carvedCount);
+        if (tvSummaryBox != null) {
+            tvSummaryBox.setText(sb.toString());
+        }
+    }
+
     private void refreshTreeOnMainThread() {
         new Handler(Looper.getMainLooper()).post(new Runnable() {
             @Override
@@ -353,6 +420,7 @@ public class ScanActivity extends Activity {
                     }
                 }
                 updateBreadcrumb();
+                updateSummaryBox();
                 adapter.notifyDataSetChanged();
             }
         });
@@ -391,6 +459,8 @@ public class ScanActivity extends Activity {
 
     private void startScanService() {
         allFlatEntries.clear();
+        carvedCount = 0;
+        fsFoundCount = 0;
         Intent intent = new Intent(this, ScanService.class);
         if (sourceUri != null) {
             intent.putExtra(ScanService.EXTRA_URI, sourceUri);

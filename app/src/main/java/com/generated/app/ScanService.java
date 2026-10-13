@@ -161,20 +161,25 @@ public class ScanService extends Service {
             @Override
             public void run() {
                 try {
-                    // 1. Try parsing filesystem using strict multi-tier fallback (Primary, Backup Boot Sector, Second FAT, exFAT, Specific LBA scan)
+                    // 1. Try parsing filesystem using strict multi-tier fallback
                     List<RecoveredEntry> fsEntries = FilesystemParser.parseFilesystem(byteSource);
-                    for (RecoveredEntry entry : fsEntries) {
-                        while (isPaused && !isCancelled) {
-                            try { Thread.sleep(500); } catch (InterruptedException e) { break; }
+                    
+                    if (!fsEntries.isEmpty()) {
+                        for (RecoveredEntry entry : fsEntries) {
+                            while (isPaused && !isCancelled) {
+                                try { Thread.sleep(500); } catch (InterruptedException e) { break; }
+                            }
+                            if (isCancelled) return;
+                            foundEntries.add(entry);
+                            broadcastFileFound(entry);
                         }
-                        if (isCancelled) return;
-                        foundEntries.add(entry);
-                        broadcastFileFound(entry);
-                    }
+                        DiagnosticReporter.log("הסריקה הסתיימה בהצלחה דרך מערכת הקבצים. נמצאו " + foundEntries.size() + " פריטים.");
+                    } else {
+                        // 2. If filesystem yields zero entries, it must NOT count as success.
+                        // Automatically run signature carving scan and inform user/log.
+                        DiagnosticReporter.log("מערכת הקבצים לא מצאה קבצים (נמצאו 0 קבצים). מפעיל סריקת חתימות עמוקה (Deep Scan / Carving)...");
+                        broadcastProgress(0, 0, "Filesystem scan found no files, running deep scan");
 
-                    // 2. Only if filesystem yields zero entries, fall back to carving
-                    if (foundEntries.isEmpty()) {
-                        DiagnosticReporter.log("מערכת הקבצים לא החזירה קבצים. מפעיל חיתוך חתימות (Carving) עמוק...");
                         carver.carve(byteSource, new CarverCallback() {
                             @Override
                             public void onFileFound(CarvedFile carvedFile) {
@@ -217,13 +222,11 @@ public class ScanService extends Service {
                                 if (isCancelled) return;
 
                                 int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-                                updateNotification("חיתוך חתימות (Carving): " + percent + "% • נמצאו: " + foundEntries.size(), percent);
-                                broadcastProgress(percent, foundEntries.size(), "חיתוך חתימות עמוק (Carving עקב מערכת קבצים ריקה)");
+                                updateNotification("Filesystem scan found no files, running deep scan: " + percent + "% • נמצאו: " + foundEntries.size(), percent);
+                                broadcastProgress(percent, foundEntries.size(), "Filesystem scan found no files, running deep scan");
                             }
                         });
-                        DiagnosticReporter.setFilesFoldersFound(String.valueOf(foundEntries.size()) + " (דרך Carving)");
-                    } else {
-                        DiagnosticReporter.log("הסריקה הסתיימה בהצלחה דרך מערכת הקבצים. נמצאו " + foundEntries.size() + " פריטים.");
+                        DiagnosticReporter.setFilesFoldersFound(String.valueOf(foundEntries.size()) + " (דרך Carving עקב מערכת קבצים ריקה)");
                     }
 
                 } catch (Exception e) {
