@@ -74,7 +74,7 @@ public class SettingsActivity extends Activity {
         btnSave.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Toast.makeText(SettingsActivity.DatasetUtil.class.isAnnotation() ? SettingsActivity.this : SettingsActivity.this, R.string.saved_success, Toast.LENGTH_SHORT).show();
+                Toast.makeText(SettingsActivity.this, R.string.saved_success, Toast.LENGTH_SHORT).show();
                 finish();
             }
         });
