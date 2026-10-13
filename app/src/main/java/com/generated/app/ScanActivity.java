@@ -107,7 +107,11 @@ public class ScanActivity extends Activity {
                 }
                 refreshTreeOnMainThread();
             } else if (ScanService.ACTION_COMPLETED.equals(action)) {
-                tvStatus.setText(R.string.scan_completed);
+                if (allFlatEntries.isEmpty()) {
+                    tvStatus.setText("Filesystem scan found no files, running deep scan");
+                } else {
+                    tvStatus.setText(R.string.scan_completed);
+                }
                 btnCancel.setText(android.R.string.ok);
                 btnPauseResume.setVisibility(View.GONE);
                 tvMethodUsed.setText("שיטת שחזור: הושלם (" + FilesystemParser.getRecoveryMethodUsed() + ")");
@@ -193,7 +197,7 @@ public class ScanActivity extends Activity {
         methodParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
         topCard.addView(tvMethodUsed, methodParams);
 
-        // Summary box right under status/method, always visible
+        // Summary box with full report text included
         tvSummaryBox = new TextView(this);
         tvSummaryBox.setTextSize(12);
         tvSummaryBox.setTextColor(0xFF444444);
@@ -209,7 +213,7 @@ public class ScanActivity extends Activity {
         updateSummaryBox();
 
         btnCopyReport = new Button(this);
-        btnCopyReport.setText("העתק דוח (Copy report)");
+        btnCopyReport.setText("העתק דוח מלא (Copy report)");
         btnCopyReport.setTextSize(12);
         btnCopyReport.setTextColor(0xFFFFFFFF);
         btnCopyReport.setBackgroundColor(0xFF1976D2);
@@ -224,10 +228,10 @@ public class ScanActivity extends Activity {
             @Override
             public void onClick(View v) {
                 ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData clip = ClipData.newPlainText("Scan Report", tvSummaryBox.getText().toString());
+                ClipData clip = ClipData.newPlainText("Scan Report", DiagnosticReporter.generateFullReport());
                 if (clipboard != null) {
                     clipboard.setPrimaryClip(clip);
-                    Toast.makeText(ScanActivity.this, "הדוח הועתק ללוח", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(ScanActivity.this, "הדוח המלא הועתק ללוח", Toast.LENGTH_SHORT).show();
                 }
             }
         });
@@ -397,7 +401,6 @@ public class ScanActivity extends Activity {
         sb.append("סיכום סריקה:\n");
         sb.append("• שיטה בשימוש: ").append(lastReportMethod).append("\n");
         sb.append("• מערכת קבצים זוהתה: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n");
-        sb.append("• Partition Start LBA: ").append("0").append("\n");
         sb.append("• קבצים ותיקיות במערכת קבצים: ").append(fsFoundCount).append("\n");
         sb.append("• קבצים שחולצו (Carved): ").append(carvedCount);
         if (tvSummaryBox != null) {

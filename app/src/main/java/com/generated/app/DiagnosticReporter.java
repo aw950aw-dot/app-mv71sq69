@@ -15,6 +15,7 @@ public class DiagnosticReporter {
     private static String filesFoldersFound = "0";
     private static String skippedEntriesLog = "אין פריטים שדולגו";
     private static String lunUsed = "0";
+    private static String rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
     private static final List<String> rawDirEntriesDump = new ArrayList<>();
 
     public static synchronized void clear() {
@@ -29,6 +30,7 @@ public class DiagnosticReporter {
         filesFoldersFound = "0";
         skippedEntriesLog = "אין פריטים שדולגו";
         lunUsed = "0";
+        rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
         rawDirEntriesDump.clear();
     }
 
@@ -80,6 +82,10 @@ public class DiagnosticReporter {
         lunUsed = lun;
     }
 
+    public static synchronized void setRawSectorDumpText(String text) {
+        rawSectorDumpText = text;
+    }
+
     public static synchronized void addRawDirEntryDump(String dump) {
         rawDirEntriesDump.add(dump);
     }
@@ -96,8 +102,9 @@ public class DiagnosticReporter {
         sb.append("7. LBA של תיקיית השורש (Root Dir): ").append(rootDirLba).append("\n");
         sb.append("8. מספר רשומות תיקיית שורש שנקראו: ").append(rootEntriesCount).append("\n");
         sb.append("9. סך קבצים ותיקיות שנמצאו: ").append(filesFoldersFound).append("\n\n");
-        sb.append("10. פריטים שדולגו וסיבת דילוג:\n").append(skippedEntriesLog).append("\n\n");
-        sb.append("11. דאמפ 32 רשומות שורש ראשונות (Hex + פיענוח):\n");
+        sb.append("10. דאמפ סקטורים גולמיים (LBA 0, 1, 6, 2048, 8192, 32768, 65536, 1048576):\n").append(rawSectorDumpText).append("\n\n");
+        sb.append("11. פריטים שדולגו וסיבת דילוג:\n").append(skippedEntriesLog).append("\n\n");
+        sb.append("12. דאמפ 32 רשומות שורש ראשונות (Hex + פיענוח):\n");
         if (rawDirEntriesDump.isEmpty()) {
             sb.append("(אין דאמפ זמין)\n");
         } else {
@@ -105,7 +112,7 @@ public class DiagnosticReporter {
                 sb.append(d).append("\n");
             }
         }
-        sb.append("\n12. יומן אירועים כללי:\n");
+        sb.append("\n13. יומן אירועים כללי:\n");
         for (String l : logs) {
             sb.append(l).append("\n");
         }
