@@ -62,6 +62,7 @@ public class UsbMassStorageSource implements ByteSource {
     private static void logDiag(String message) {
         String entry = "[" + System.currentTimeMillis() + "] " + message;
         Log.d(TAG, entry);
+        DiagnosticReporter.log(entry);
         synchronized (diagnosticLogs) {
             diagnosticLogs.add(entry);
             if (diagnosticLogs.size() > 100) {
@@ -101,7 +102,6 @@ public class UsbMassStorageSource implements ByteSource {
                 throw new IOException("USB permission denied");
             }
 
-            // Find Mass Storage Interface
             for (int i = 0; i < device.getInterfaceCount(); i++) {
                 UsbInterface intf = device.getInterface(i);
                 int iclass = intf.getInterfaceClass();
@@ -247,11 +247,11 @@ public class UsbMassStorageSource implements ByteSource {
         } catch (Exception e) {
             lun = 0;
         }
+        DiagnosticReporter.setLunUsed(String.valueOf(lun));
     }
 
     private void bulkOnlyResetAndClear() {
         try {
-            // Bulk-Only Mass Storage Reset: bmRequestType = 0x21, bRequest = 0xFF, wValue = 0, wIndex = interface number
             int bmRequestType = 0x21;
             int bRequest = 0xFF;
             int wValue = 0;
@@ -259,7 +259,7 @@ public class UsbMassStorageSource implements ByteSource {
             byte[] buffer = new byte[0];
             connection.controlTransfer(bmRequestType, bRequest, wValue, wIndex, buffer, 0, 3000);
 
-            int requestTypeOut = 0x02; // Endpoint clear feature
+            int requestTypeOut = 0x02;
             int requestClearFeature = 0x01;
             int featureHalt = 0x00;
 
@@ -311,10 +311,8 @@ public class UsbMassStorageSource implements ByteSource {
         int residue = csw.getInt();
         byte status = csw.get();
 
-        // Verify that CSW signature is "USBS" (0x53425355), that CSW tag equals CBW tag
         if (sig != CSW_SIGNATURE || tag != expectedTag || status != 0) {
-            logDiag("CSW invalid: sig=0x" + Integer.toHexString(sig) + " (expected 0x" + Integer.toHexString(CSW_SIGNATURE) + 
-                    "), tag=" + tag + " (expected " + expectedTag + "), status=" + status);
+            logDiag("CSW invalid: sig=0x" + Integer.toHexString(sig) + ", tag=" + tag + ", status=" + status);
             if (status != 0) {
                 requestSense();
             }
@@ -425,7 +423,6 @@ public class UsbMassStorageSource implements ByteSource {
                 int tag = tagCounter++;
                 byte[] cdb;
 
-                // Rule 3: Use READ(16) (opcode 0x88) for cards over 2TB (or sectorIndex > 0xFFFFFFFFL) and READ(10) otherwise
                 if (sectorIndex > 0xFFFFFFFFL || sectorsToRead > 0xFFFF || totalSectors > 0xFFFFFFFFL) {
                     cdb = new byte[16];
                     cdb[0] = (byte) 0x88; // READ(16)
@@ -438,15 +435,13 @@ public class UsbMassStorageSource implements ByteSource {
                     ByteBuffer.wrap(cdb, 7, 2).order(ByteOrder.BIG_ENDIAN).putShort((short) sectorsToRead);
                 }
 
-                // Send CBW with 5000ms timeout
                 if (!sendCbw(tag, bytesToTransfer, 0x80, lun, cdb)) {
                     bulkOnlyResetAndClear();
                     continue;
                 }
 
-                // Rule 1: Never call bulkTransfer with more than 16384 bytes. Data stage in loop of <= 16384 bytes chunks.
                 int totalRead = 0;
-                long deadline = System.currentTimeMillis() + 15000; // Rule 4: 15000 ms for data stage
+                long deadline = System.currentTimeMillis() + 15000;
                 boolean dataTransferOk = true;
 
                 while (totalRead < bytesToTransfer && System.currentTimeMillis() < deadline) {
@@ -468,7 +463,6 @@ public class UsbMassStorageSource implements ByteSource {
                     continue;
                 }
 
-                // Receive CSW with 5000ms timeout
                 if (!receiveCsw(tag, bytesToTransfer)) {
                     bulkOnlyResetAndClear();
                     continue;

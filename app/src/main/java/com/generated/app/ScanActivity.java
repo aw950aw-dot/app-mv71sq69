@@ -91,13 +91,13 @@ public class ScanActivity extends Activity {
 
                 RecoveredEntry entry = new RecoveredEntry(name, path, offset, length, type, isDeleted, false, modTime, name.getBytes());
                 allFlatEntries.add(entry);
-                refreshTree();
+                refreshTreeOnMainThread();
             } else if (ScanService.ACTION_COMPLETED.equals(action)) {
                 tvStatus.setText(R.string.scan_completed);
                 btnCancel.setText(android.R.string.ok);
                 btnPauseResume.setVisibility(View.GONE);
-                tvMethodUsed.setText("שיטת שחזור: הושלם בהצלחה (" + FilesystemParser.getRecoveryMethodUsed() + ")");
-                refreshTree();
+                tvMethodUsed.setText("שיטת שחזור: הושלם (" + FilesystemParser.getRecoveryMethodUsed() + ")");
+                refreshTreeOnMainThread();
             }
         }
     };
@@ -317,7 +317,7 @@ public class ScanActivity extends Activity {
         btnErrorLog.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                showErrorLogDialog();
+                showDiagnosticReportDialog();
             }
         });
 
@@ -338,19 +338,24 @@ public class ScanActivity extends Activity {
         setContentView(root);
     }
 
-    private void refreshTree() {
-        List<RecoveredEntry> roots = FilesystemParser.buildTree(allFlatEntries);
-        if (!roots.isEmpty()) {
-            rootNode = roots.get(0);
-            if (currentDirectory == null) {
-                currentDirectory = rootNode;
-            } else {
-                currentDirectory = findDirectoryByPath(rootNode, currentDirectory.getName());
-                if (currentDirectory == null) currentDirectory = rootNode;
+    private void refreshTreeOnMainThread() {
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                List<RecoveredEntry> roots = FilesystemParser.buildTree(allFlatEntries);
+                if (!roots.isEmpty()) {
+                    rootNode = roots.get(0);
+                    if (currentDirectory == null || currentDirectory == rootNode) {
+                        currentDirectory = rootNode;
+                    } else {
+                        currentDirectory = findDirectoryByPath(rootNode, currentDirectory.getName());
+                        if (currentDirectory == null) currentDirectory = rootNode;
+                    }
+                }
+                updateBreadcrumb();
+                adapter.notifyDataSetChanged();
             }
-        }
-        updateBreadcrumb();
-        adapter.notifyDataSetChanged();
+        });
     }
 
     private RecoveredEntry findDirectoryByPath(RecoveredEntry node, String name) {
@@ -385,6 +390,7 @@ public class ScanActivity extends Activity {
     }
 
     private void startScanService() {
+        allFlatEntries.clear();
         Intent intent = new Intent(this, ScanService.class);
         if (sourceUri != null) {
             intent.putExtra(ScanService.EXTRA_URI, sourceUri);
@@ -408,16 +414,11 @@ public class ScanActivity extends Activity {
         }
     }
 
-    private void showErrorLogDialog() {
-        List<String> logs = UsbMassStorageSource.getDiagnosticLogs();
-        StringBuilder sb = new StringBuilder();
-        sb.append("שיטת שחזור פעילה: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n\n");
-        for (String log : logs) {
-            sb.append(log).append("\n");
-        }
+    private void showDiagnosticReportDialog() {
+        String report = DiagnosticReporter.generateFullReport();
 
         TextView tv = new TextView(this);
-        tv.setText(sb.toString());
+        tv.setText(report);
         tv.setTextSize(12);
         tv.setTextColor(0xFF333333);
         tv.setTextIsSelectable(true);

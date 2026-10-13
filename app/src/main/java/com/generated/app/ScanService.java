@@ -37,7 +37,6 @@ public class ScanService extends Service {
     private volatile boolean isPaused = false;
     private volatile boolean isCancelled = false;
     private final List<RecoveredEntry> foundEntries = new ArrayList<>();
-    private final List<String> errorLog = new ArrayList<>();
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -74,9 +73,12 @@ public class ScanService extends Service {
             Uri uri = intent.getParcelableExtra(EXTRA_URI);
             String usbName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
 
+            DiagnosticReporter.clear();
+
             try {
                 if (uri != null) {
                     byteSource = new FileImageSource(getContentResolver(), uri);
+                    DiagnosticReporter.log("Opened Content Uri successfully.");
                 } else if (usbName != null) {
                     UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
                     HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
@@ -89,9 +91,11 @@ public class ScanService extends Service {
                     }
                     if (target != null) {
                         byteSource = new UsbMassStorageSource(this, target);
+                        DiagnosticReporter.log("Opened UsbMassStorageSource successfully for device: " + usbName);
                     }
                 }
             } catch (Exception e) {
+                DiagnosticReporter.log("FATAL: Failed to open source: " + e.getMessage());
                 stopSelf();
                 return START_NOT_STICKY;
             }
@@ -157,7 +161,7 @@ public class ScanService extends Service {
             @Override
             public void run() {
                 try {
-                    // 1. PRIMARY PRIORITY: Parse filesystem normally & backup boot sectors / backup FAT
+                    // 1. Try parsing filesystem using strict multi-tier fallback (Primary, Backup Boot Sector, Second FAT, exFAT, Specific LBA scan)
                     List<RecoveredEntry> fsEntries = FilesystemParser.parseFilesystem(byteSource);
                     for (RecoveredEntry entry : fsEntries) {
                         while (isPaused && !isCancelled) {
@@ -168,8 +172,9 @@ public class ScanService extends Service {
                         broadcastFileFound(entry);
                     }
 
-                    // 2. FALLBACK CARVED FILES GROUP IF FILESYSTEM YIELDED NOTHING OR ALONGSIDE CARVING
+                    // 2. Only if filesystem yields zero entries, fall back to carving
                     if (foundEntries.isEmpty()) {
+                        DiagnosticReporter.log("מערכת הקבצים לא החזירה קבצים. מפעיל חיתוך חתימות (Carving) עמוק...");
                         carver.carve(byteSource, new CarverCallback() {
                             @Override
                             public void onFileFound(CarvedFile carvedFile) {
@@ -213,13 +218,16 @@ public class ScanService extends Service {
 
                                 int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
                                 updateNotification("חיתוך חתימות (Carving): " + percent + "% • נמצאו: " + foundEntries.size(), percent);
-                                broadcastProgress(percent, foundEntries.size(), "חיתוך חתימות עמוק (Carving עקב מערכת קבצים פגומה לחלוטין)");
+                                broadcastProgress(percent, foundEntries.size(), "חיתוך חתימות עמוק (Carving עקב מערכת קבצים ריקה)");
                             }
                         });
+                        DiagnosticReporter.setFilesFoldersFound(String.valueOf(foundEntries.size()) + " (דרך Carving)");
+                    } else {
+                        DiagnosticReporter.log("הסריקה הסתיימה בהצלחה דרך מערכת הקבצים. נמצאו " + foundEntries.size() + " פריטים.");
                     }
 
                 } catch (Exception e) {
-                    errorLog.add("שגיאת סריקה: " + e.getMessage());
+                    DiagnosticReporter.log("שגיאה קריטית בסריקה: " + e.getMessage());
                 } finally {
                     broadcastCompleted();
                     if (byteSource != null) {
