@@ -57,7 +57,7 @@ public class ScanActivity extends Activity {
     private long totalBytesScanned = 0;
     private int filesFoundCount = 0;
 
-    private final Handler mainHandler = new Handler(Looper.getMainHandler());
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -263,7 +263,7 @@ public class ScanActivity extends Activity {
 
         scanThread = new Thread(new Runnable() {
             @Override
-            public void Runnable() {
+            public void run() {
                 try {
                     carver.carve(byteSource, new CarverCallback() {
                         @Override
@@ -416,7 +416,7 @@ public class ScanActivity extends Activity {
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
-                        Toast.makeText(ScanActivity.this, R.string.saved_success + " (" + finalSuccess + "/" + filesToSave.size() + ")", Toast.LENGTH_LONG).show();
+                        Toast.makeText(ScanActivity.this, getString(R.string.saved_success) + " (" + finalSuccess + "/" + filesToSave.size() + ")", Toast.LENGTH_LONG).show();
                     }
                 });
             }
