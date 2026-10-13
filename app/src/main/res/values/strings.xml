@@ -11,6 +11,9 @@
     <string name="start_scan">התחל סריקה ושחזור</string>
     <string name="scanning_title">סורק קבצים…</string>
     <string name="cancel_scan">ביטול סריקה</string>
+    <string name="pause_scan">השהה</string>
+    <string name="resume_scan">המשך</string>
+    <string name="scan_paused">הסריקה מושהית</string>
     <string name="save_selected">שמור נבחרים</string>
     <string name="save_all">שמור הכל</string>
     <string name="select_all">בחר הכל</string>
@@ -22,6 +25,15 @@
     <string name="saved_success">הקבצים נשמרו בהצלחה!</string>
     <string name="error_saving">שגיאה בשמירת הקבצים</string>
     <string name="warning_same_source">אזהרה: נראה שבחרת תיקיית יעד זהה למקור. מומלץ לבחור תיקייה אחרת.</string>
-    <string name="progress_speed">%d%% • %.2f מ״ב/שנייה • נמצאו: %d</string>
+    <string name="progress_speed">%d%% • נמצאו: %d</string>
     <string name="file_type_prefix">סוג: </string>
+    <string name="menu_guide">מדריך חירום</string>
+    <string name="menu_settings">הגדרות</string>
+    <string name="guide_title">הפסק להשתמש בכרטיס מיד!</string>
+    <string name="settings_title">הגדרות סריקה</string>
+    <string name="setting_deep_scan">סריקה עמוקה של חתימות (Carving)</string>
+    <string name="setting_background_service">שירות רקע והתראות מתמשכות</string>
+    <string name="save_settings">שמור הגדרות</string>
+    <string name="view_error_log">דוח שגיאות קריאה</string>
+    <string name="error_log_title">דוח שגיאות קריאה בסקטורים</string>
 </resources>

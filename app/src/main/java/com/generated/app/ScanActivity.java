@@ -1,13 +1,15 @@
 package com.generated.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.hardware.usb.UsbDevice;
-import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -28,7 +30,6 @@ import android.widget.Toast;
 
 import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 
 public class ScanActivity extends Activity {
@@ -40,24 +41,55 @@ public class ScanActivity extends Activity {
     private Uri sourceUri;
     private String usbDeviceName;
     private ByteSource byteSource;
-    private Carver carver;
 
     private TextView tvStatus;
     private ProgressBar progressBar;
     private ListView listView;
     private Button btnCancel;
+    private Button btnPauseResume;
     private Button btnSaveAll;
     private Button btnSaveSelected;
     private Button btnToggleSelectAll;
+    private Button btnErrorLog;
 
     private final List<RecoveredEntryHolder> entryHolders = new ArrayList<>();
+    private final List<String> errorLogs = new ArrayList<>();
     private RecoveredEntryAdapter adapter;
 
-    private boolean isScanning = false;
-    private boolean isCancelled = false;
-    private Thread scanThread;
+    private boolean isPaused = false;
 
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            String action = intent.getAction();
+
+            if (ScanService.ACTION_PROGRESS.equals(action)) {
+                int percent = intent.getIntExtra("percent", 0);
+                int count = intent.getIntExtra("count", 0);
+                progressBar.setProgress(percent * 10);
+                tvStatus.setText("סורק קבצים... (" + percent + "%) • נמצאו: " + count);
+            } else if (ScanService.ACTION_FILE_FOUND.equals(action)) {
+                String name = intent.getStringExtra("name");
+                String path = intent.getStringExtra("path");
+                long offset = intent.getLongExtra("offset", 0);
+                long length = intent.getLongExtra("length", 0);
+                String typeStr = intent.getStringExtra("type");
+                boolean isDeleted = intent.getBooleanExtra("is_deleted", false);
+
+                FileType type = FileType.JPEG;
+                try { type = FileType.valueOf(typeStr); } catch (Exception ignored) {}
+
+                RecoveredEntry entry = new RecoveredEntry(name, path, offset, length, type, isDeleted, false);
+                entryHolders.add(new RecoveredEntryHolder(entry));
+                adapter.notifyDataSetChanged();
+            } else if (ScanService.ACTION_COMPLETED.equals(action)) {
+                tvStatus.setText(R.string.scan_completed);
+                btnCancel.setText(android.R.string.ok);
+                btnPauseResume.setVisibility(View.GONE);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -77,30 +109,22 @@ public class ScanActivity extends Activity {
             if (sourceUri != null) {
                 byteSource = new FileImageSource(getContentResolver(), sourceUri);
             } else {
-                UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
-                HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
-                UsbDevice targetDevice = null;
-                for (UsbDevice d : deviceList.values()) {
+                android.hardware.usb.UsbManager usbManager = (android.hardware.usb.UsbManager) getSystemService(Context.USB_SERVICE);
+                android.hardware.usb.UsbDevice target = null;
+                for (android.hardware.usb.UsbDevice d : usbManager.getDeviceList().values()) {
                     if (d.getDeviceName().equals(usbDeviceName)) {
-                        targetDevice = d;
+                        target = d;
                         break;
                     }
                 }
-                if (targetDevice == null) {
-                    throw new Exception("USB device not found");
+                if (target != null) {
+                    byteSource = new UsbMassStorageSource(this, target);
                 }
-                byteSource = new UsbMassStorageSource(this, targetDevice);
             }
-        } catch (Exception e) {
-            Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
-            finish();
-            return;
-        }
-
-        carver = new Carver();
+        } catch (Exception ignored) {}
 
         setupUI();
-        startScan();
+        startScanService();
     }
 
     private void setupUI() {
@@ -157,19 +181,30 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1.0f
         );
-        btnParams.rightMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        btnParams.rightMargin = (int) (6 * getResources().getDisplayMetrics().density);
         topButtons.addView(btnCancel, btnParams);
 
-        btnToggleSelectAll = new Button(this);
-        btnToggleSelectAll.setText(R.string.deselect_all);
-        btnToggleSelectAll.setTextColor(0xFF1976D2);
-        btnToggleSelectAll.setBackgroundColor(0xFFE3F2FD);
+        btnPauseResume = new Button(this);
+        btnPauseResume.setText(R.string.pause_scan);
+        btnPauseResume.setTextColor(0xFFE65100);
+        btnPauseResume.setBackgroundColor(0xFFFFF3E0);
         LinearLayout.LayoutParams btnParams2 = new LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1.0f
         );
-        topButtons.addView(btnToggleSelectAll, btnParams2);
+        btnParams2.rightMargin = (int) (6 * getResources().getDisplayMetrics().density);
+        topButtons.addView(btnPauseResume, btnParams2);
+
+        btnErrorLog = new Button(this);
+        btnErrorLog.setText(R.string.view_error_log);
+        btnErrorLog.setTextColor(0xFF455A64);
+        btnErrorLog.setBackgroundColor(0xFFECEFF1);
+        topButtons.addView(btnErrorLog, new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1.0f
+        ));
 
         listView = new ListView(this);
         LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
@@ -215,32 +250,28 @@ public class ScanActivity extends Activity {
         btnCancel.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (isScanning) {
-                    isCancelled = true;
-                    if (scanThread != null) scanThread.interrupt();
-                    tvStatus.setText(R.string.scan_cancelled);
-                } else {
-                    finish();
-                }
+                Intent intent = new Intent(ScanActivity.this, ScanService.class);
+                intent.setAction(ScanService.ACTION_CANCEL);
+                startService(intent);
+                finish();
             }
         });
 
-        btnToggleSelectAll.setOnClickListener(new View.OnClickListener() {
+        btnPauseResume.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                boolean allSelected = true;
-                for (RecoveredEntryHolder h : entryHolders) {
-                    if (!h.getEntry().isSelected()) {
-                        allSelected = false;
-                        break;
-                    }
-                }
-                boolean newState = !allSelected;
-                for (RecoveredEntryHolder h : entryHolders) {
-                    h.getEntry().setSelected(newState);
-                }
-                btnToggleSelectAll.setText(newState ? R.string.deselect_all : R.string.select_all);
-                adapter.notifyDataSetChanged();
+                isPaused = !isPaused;
+                Intent intent = new Intent(ScanActivity.this, ScanService.class);
+                intent.setAction(isPaused ? ScanService.ACTION_PAUSE : ScanService.ACTION_RESUME);
+                startService(intent);
+                btnPauseResume.setText(isPaused ? R.string.resume_scan : R.string.pause_scan);
+            }
+        });
+
+        btnErrorLog.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showErrorLogDialog();
             }
         });
 
@@ -261,99 +292,44 @@ public class ScanActivity extends Activity {
         setContentView(root);
     }
 
-    private void startScan() {
-        isScanning = true;
-        isCancelled = false;
-        entryHolders.clear();
-        adapter.notifyDataSetChanged();
+    private void startScanService() {
+        Intent intent = new Intent(this, ScanService.class);
+        if (sourceUri != null) {
+            intent.putExtra(ScanService.EXTRA_URI, sourceUri);
+        } else if (usbDeviceName != null) {
+            intent.putExtra(ScanService.EXTRA_USB_DEVICE_NAME, usbDeviceName);
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
 
-        scanThread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    // 1. Filesystem-aware recovery (MBR, FAT32, exFAT, deleted files, folder tree)
-                    List<RecoveredEntry> fsEntries = FilesystemParser.parseFilesystem(byteSource);
-                    for (RecoveredEntry entry : fsEntries) {
-                        if (isCancelled) return;
-                        entryHolders.add(new RecoveredEntryHolder(entry));
-                    }
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ScanService.ACTION_PROGRESS);
+        filter.addAction(ScanService.ACTION_FILE_FOUND);
+        filter.addAction(ScanService.ACTION_COMPLETED);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(scanReceiver, filter);
+        }
+    }
 
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            adapter.notifyDataSetChanged();
-                            tvStatus.setText("שחזור מערכת קבצים הושלם. נמצאו " + entryHolders.size() + " פריטים.");
-                        }
-                    });
-
-                    // 2. Fallback Carver for raw unreferenced files
-                    carver.carve(byteSource, new CarverCallback() {
-                        @Override
-                        public void onFileFound(CarvedFile carvedFile) {
-                            if (isCancelled) return;
-                            // Check if overlap exists
-                            boolean exists = false;
-                            for (RecoveredEntryHolder h : entryHolders) {
-                                if (Math.abs(h.getEntry().getOffset() - carvedFile.getOffset()) < 4096) {
-                                    exists = true;
-                                    break;
-                                }
-                            }
-                            if (!exists) {
-                                RecoveredEntry carvedEntry = new RecoveredEntry(
-                                        "carved_" + carvedFile.getOffset() + "." + carvedFile.getType().getName().toLowerCase(),
-                                        "/carved",
-                                        carvedFile.getOffset(),
-                                        carvedFile.getLength(),
-                                        carvedFile.getType(),
-                                        true,
-                                        false
-                                );
-                                final RecoveredEntryHolder holder = new RecoveredEntryHolder(carvedEntry);
-                                mainHandler.post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        entryHolders.add(holder);
-                                        adapter.notifyDataSetChanged();
-                                    }
-                                });
-                            }
-                        }
-
-                        @Override
-                        public void onProgress(long bytesScanned, long totalBytes) {
-                            if (isCancelled) return;
-                            final int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-                            mainHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    progressBar.setProgress(percent * 10);
-                                }
-                            });
-                        }
-                    });
-
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            isScanning = false;
-                            btnCancel.setText(android.R.string.ok);
-                            tvStatus.setText(R.string.scan_completed);
-                        }
-                    });
-
-                } catch (Exception e) {
-                    mainHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            isScanning = false;
-                            tvStatus.setText(R.string.scan_completed);
-                        }
-                    });
-                }
+    private void showErrorLogDialog() {
+        StringBuilder sb = new StringBuilder();
+        if (errorLogs.isEmpty()) {
+            sb.append("לא נרשמו שגיאות קריאה במהלך הסריקה.");
+        } else {
+            for (String err : errorLogs) {
+                sb.append("• ").append(err).append("\n");
             }
-        });
-        scanThread.start();
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.error_log_title)
+                .setMessage(sb.toString())
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
     }
 
     private boolean saveAllModeFlag = true;
@@ -421,7 +397,7 @@ public class ScanActivity extends Activity {
                 }
 
                 final int finalSuccess = successCount;
-                mainHandler.post(new Runnable() {
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
                         Toast.makeText(ScanActivity.this, getString(R.string.saved_success) + " (" + finalSuccess + "/" + toSave.size() + ")", Toast.LENGTH_LONG).show();
@@ -433,29 +409,17 @@ public class ScanActivity extends Activity {
 
     private class RecoveredEntryHolder {
         private final RecoveredEntry entry;
-        public RecoveredEntryHolder(RecoveredEntry entry) {
-            this.entry = entry;
-        }
-        public RecoveredEntry getEntry() {
-            return entry;
-        }
+        public RecoveredEntryHolder(RecoveredEntry entry) { this.entry = entry; }
+        public RecoveredEntry getEntry() { return entry; }
     }
 
     private class RecoveredEntryAdapter extends BaseAdapter {
         @Override
-        public int getCount() {
-            return entryHolders.size();
-        }
-
+        public int getCount() { return entryHolders.size(); }
         @Override
-        public Object getItem(int position) {
-            return entryHolders.get(position);
-        }
-
+        public Object getItem(int position) { return entryHolders.get(position); }
         @Override
-        public long getItemId(int position) {
-            return position;
-        }
+        public long getItemId(int position) { return position; }
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
@@ -558,5 +522,16 @@ public class ScanActivity extends Activity {
         final String[] units = new String[]{"בייט", "קילובייט", "מגהבייט", "ג׳יגהבייט", "טרהבייט"};
         int digitGroups = (int) (Math.log10(sizeBytes) / Math.log10(1024));
         return String.format(java.util.Locale.getDefault(), "%.2f %s", sizeBytes / Math.pow(1024, digitGroups), units[digitGroups]);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        try {
+            unregisterReceiver(scanReceiver);
+        } catch (Exception ignored) {}
+        if (byteSource != null) {
+            byteSource.close();
+        }
     }
 }

@@ -55,21 +55,21 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        titleParams.bottomMargin = (int) (32 * getResources().getDisplayMetrics().density);
+        titleParams.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
         rootLayout.addView(tvTitle, titleParams);
 
         Button btnSelect = new Button(this);
         btnSelect.setText(R.string.select_image_file);
         btnSelect.setTextColor(0xFFFFFFFF);
         btnSelect.setBackgroundColor(0xFF1976D2);
-        int btnPadding = (int) (16 * getResources().getDisplayMetrics().density);
+        int btnPadding = (int) (14 * getResources().getDisplayMetrics().density);
         btnSelect.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
         
         LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        btnParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        btnParams.bottomMargin = (int) (12 * getResources().getDisplayMetrics().density);
         rootLayout.addView(btnSelect, btnParams);
 
         Button btnSelectUsb = new Button(this);
@@ -77,13 +77,21 @@ public class MainActivity extends Activity {
         btnSelectUsb.setTextColor(0xFFFFFFFF);
         btnSelectUsb.setBackgroundColor(0xFF00838F);
         btnSelectUsb.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
-        
-        LinearLayout.LayoutParams usbParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        usbParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
-        rootLayout.addView(btnSelectUsb, usbParams);
+        rootLayout.addView(btnSelectUsb, btnParams);
+
+        Button btnGuide = new Button(this);
+        btnGuide.setText(R.string.menu_guide);
+        btnGuide.setTextColor(0xFFFFFFFF);
+        btnGuide.setBackgroundColor(0xFF6A1B9A);
+        btnGuide.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
+        rootLayout.addView(btnGuide, btnParams);
+
+        Button btnSettings = new Button(this);
+        btnSettings.setText(R.string.menu_settings);
+        btnSettings.setTextColor(0xFFFFFFFF);
+        btnSettings.setBackgroundColor(0xFF455A64);
+        btnSettings.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
+        rootLayout.addView(btnSettings, btnParams);
 
         btnStartScan = new Button(this);
         btnStartScan.setText(R.string.start_scan);
@@ -96,7 +104,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        scanParams.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
+        scanParams.bottomMargin = (int) (20 * getResources().getDisplayMetrics().density);
         rootLayout.addView(btnStartScan, scanParams);
 
         LinearLayout cardLayout = new LinearLayout(this);
@@ -112,18 +120,18 @@ public class MainActivity extends Activity {
 
         tvFileName = new TextView(this);
         tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
-        tvFileName.setTextSize(16);
+        tvFileName.setTextSize(15);
         tvFileName.setTextColor(0xFF333333);
         LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        textParams.bottomMargin = (int) (12 * getResources().getDisplayMetrics().density);
+        textParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
         cardLayout.addView(tvFileName, textParams);
 
         tvFileSize = new TextView(this);
         tvFileSize.setText(getString(R.string.file_size_label) + "-");
-        tvFileSize.setTextSize(16);
+        tvFileSize.setTextSize(15);
         tvFileSize.setTextColor(0xFF333333);
         cardLayout.addView(tvFileSize, textParams);
 
@@ -141,6 +149,20 @@ public class MainActivity extends Activity {
             }
         });
 
+        btnGuide.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, GuideActivity.class));
+            }
+        });
+
+        btnSettings.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, SettingsActivity.class));
+            }
+        });
+
         btnStartScan.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -149,7 +171,6 @@ public class MainActivity extends Activity {
                     intent.putExtra(ScanActivity.EXTRA_URI, currentUri);
                     startActivity(intent);
                 } else if (currentUsbDevice != null) {
-                    // Pass device name or identifier via intent bundle, ScanActivity handles UsbSource if uri is null and usb device is present
                     Intent intent = new Intent(MainActivity.this, ScanActivity.class);
                     intent.putExtra(ScanActivity.EXTRA_USB_DEVICE_NAME, currentUsbDevice.getDeviceName());
                     startActivity(intent);
