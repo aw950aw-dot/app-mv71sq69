@@ -50,16 +50,12 @@ public class ScanActivity extends Activity {
     private Button btnSaveSelected;
     private Button btnToggleSelectAll;
 
-    private final List<CarvedFileHolder> fileHolders = new ArrayList<>();
-    private CarvedFileListAdapter adapter;
+    private final List<RecoveredEntryHolder> entryHolders = new ArrayList<>();
+    private RecoveredEntryAdapter adapter;
 
     private boolean isScanning = false;
     private boolean isCancelled = false;
     private Thread scanThread;
-
-    private long startTimeMillis = 0;
-    private long totalBytesScanned = 0;
-    private int filesFoundCount = 0;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -114,7 +110,6 @@ public class ScanActivity extends Activity {
         root.setPadding(pad, pad, pad, pad);
         root.setBackgroundColor(0xFFF8F9FA);
 
-        // Header / Progress Card
         LinearLayout topCard = new LinearLayout(this);
         topCard.setOrientation(LinearLayout.VERTICAL);
         topCard.setPadding(pad, pad, pad, pad);
@@ -176,7 +171,6 @@ public class ScanActivity extends Activity {
         );
         topButtons.addView(btnToggleSelectAll, btnParams2);
 
-        // List View of found files
         listView = new ListView(this);
         LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -186,17 +180,15 @@ public class ScanActivity extends Activity {
         listParams.bottomMargin = pad;
         root.addView(listView, listParams);
 
-        adapter = new CarvedFileListAdapter();
+        adapter = new RecoveredEntryAdapter();
         listView.setAdapter(adapter);
 
-        // Bottom Action Bar
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams bottomParams = new LinearLayout.LayoutParams(
+        root.addView(bottomBar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        root.addView(bottomBar, bottomParams);
+        ));
 
         btnSaveSelected = new Button(this);
         btnSaveSelected.setText(R.string.save_selected);
@@ -214,24 +206,19 @@ public class ScanActivity extends Activity {
         btnSaveAll.setText(R.string.save_all);
         btnSaveAll.setTextColor(0xFFFFFFFF);
         btnSaveAll.setBackgroundColor(0xFF388E3C);
-        LinearLayout.LayoutParams saveAllParams = new LinearLayout.LayoutParams(
+        bottomBar.addView(btnSaveAll, new LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1.0f
-        );
-        bottomBar.addView(btnSaveAll, saveAllParams);
+        ));
 
-        // Listeners
         btnCancel.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 if (isScanning) {
                     isCancelled = true;
-                    if (scanThread != null) {
-                        scanThread.interrupt();
-                    }
+                    if (scanThread != null) scanThread.interrupt();
                     tvStatus.setText(R.string.scan_cancelled);
-                    btnCancel.setEnabled(false);
                 } else {
                     finish();
                 }
@@ -242,15 +229,15 @@ public class ScanActivity extends Activity {
             @Override
             public void onClick(View v) {
                 boolean allSelected = true;
-                for (CarvedFileHolder holder : fileHolders) {
-                    if (!holder.isSelected()) {
+                for (RecoveredEntryHolder h : entryHolders) {
+                    if (!h.getEntry().isSelected()) {
                         allSelected = false;
                         break;
                     }
                 }
                 boolean newState = !allSelected;
-                for (CarvedFileHolder holder : fileHolders) {
-                    holder.setSelected(newState);
+                for (RecoveredEntryHolder h : entryHolders) {
+                    h.getEntry().setSelected(newState);
                 }
                 btnToggleSelectAll.setText(newState ? R.string.deselect_all : R.string.select_all);
                 adapter.notifyDataSetChanged();
@@ -277,47 +264,70 @@ public class ScanActivity extends Activity {
     private void startScan() {
         isScanning = true;
         isCancelled = false;
-        startTimeMillis = System.currentTimeMillis();
-        totalBytesScanned = 0;
-        filesFoundCount = 0;
-        fileHolders.clear();
+        entryHolders.clear();
         adapter.notifyDataSetChanged();
 
         scanThread = new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
+                    // 1. Filesystem-aware recovery (MBR, FAT32, exFAT, deleted files, folder tree)
+                    List<RecoveredEntry> fsEntries = FilesystemParser.parseFilesystem(byteSource);
+                    for (RecoveredEntry entry : fsEntries) {
+                        if (isCancelled) return;
+                        entryHolders.add(new RecoveredEntryHolder(entry));
+                    }
+
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            adapter.notifyDataSetChanged();
+                            tvStatus.setText("שחזור מערכת קבצים הושלם. נמצאו " + entryHolders.size() + " פריטים.");
+                        }
+                    });
+
+                    // 2. Fallback Carver for raw unreferenced files
                     carver.carve(byteSource, new CarverCallback() {
                         @Override
-                        public void onFileFound(final CarvedFile carvedFile) {
+                        public void onFileFound(CarvedFile carvedFile) {
                             if (isCancelled) return;
-                            filesFoundCount++;
-                            final CarvedFileHolder holder = new CarvedFileHolder(carvedFile);
-                            mainHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    fileHolders.add(holder);
-                                    adapter.notifyDataSetChanged();
+                            // Check if overlap exists
+                            boolean exists = false;
+                            for (RecoveredEntryHolder h : entryHolders) {
+                                if (Math.abs(h.getEntry().getOffset() - carvedFile.getOffset()) < 4096) {
+                                    exists = true;
+                                    break;
                                 }
-                            });
+                            }
+                            if (!exists) {
+                                RecoveredEntry carvedEntry = new RecoveredEntry(
+                                        "carved_" + carvedFile.getOffset() + "." + carvedFile.getType().getName().toLowerCase(),
+                                        "/carved",
+                                        carvedFile.getOffset(),
+                                        carvedFile.getLength(),
+                                        carvedFile.getType(),
+                                        true,
+                                        false
+                                );
+                                final RecoveredEntryHolder holder = new RecoveredEntryHolder(carvedEntry);
+                                mainHandler.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        entryHolders.add(holder);
+                                        adapter.notifyDataSetChanged();
+                                    }
+                                });
+                            }
                         }
 
                         @Override
-                        public void onProgress(final long bytesScanned, final long totalBytes) {
+                        public void onProgress(long bytesScanned, long totalBytes) {
                             if (isCancelled) return;
-                            totalBytesScanned = bytesScanned;
-                            final long elapsedMillis = System.currentTimeMillis() - startTimeMillis;
-                            final double mbPerSec = elapsedMillis > 0 ? (bytesScanned / (1024.0 * 1024.0)) / (elapsedMillis / 1000.0) : 0;
                             final int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-
                             mainHandler.post(new Runnable() {
                                 @Override
                                 public void run() {
-                                    progressBar.setProgress((int) ((bytesScanned * 1000) / (totalBytes > 0 ? totalBytes : 1)));
-                                    String text = String.format(java.util.Locale.getDefault(),
-                                            getString(R.string.progress_speed),
-                                            percent, mbPerSec, filesFoundCount);
-                                    tvStatus.setText(text);
+                                    progressBar.setProgress(percent * 10);
                                 }
                             });
                         }
@@ -327,7 +337,7 @@ public class ScanActivity extends Activity {
                         @Override
                         public void run() {
                             isScanning = false;
-                            btnCancel.setText(getString(android.R.string.ok));
+                            btnCancel.setText(android.R.string.ok);
                             tvStatus.setText(R.string.scan_completed);
                         }
                     });
@@ -337,7 +347,7 @@ public class ScanActivity extends Activity {
                         @Override
                         public void run() {
                             isScanning = false;
-                            tvStatus.setText(R.string.scan_cancelled);
+                            tvStatus.setText(R.string.scan_completed);
                         }
                     });
                 }
@@ -350,20 +360,6 @@ public class ScanActivity extends Activity {
 
     private void promptForSaveDirectory(boolean saveAll) {
         this.saveAllModeFlag = saveAll;
-        if (!saveAll) {
-            boolean anySelected = false;
-            for (CarvedFileHolder h : fileHolders) {
-                if (h.isSelected()) {
-                    anySelected = true;
-                    break;
-                }
-            }
-            if (!anySelected) {
-                Toast.makeText(this, R.string.no_files_found, Toast.LENGTH_SHORT).show();
-                return;
-            }
-        }
-
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         try {
             startActivityForResult(intent, REQUEST_CODE_SAVE_DIR);
@@ -376,49 +372,44 @@ public class ScanActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_CODE_SAVE_DIR && resultCode == RESULT_OK) {
-            if (data != null) {
-                Uri treeUri = data.getData();
-                if (treeUri != null) {
-                    saveFilesToDirectory(treeUri, saveAllModeFlag);
-                }
+            if (data != null && data.getData() != null) {
+                saveFilesToDirectory(data.getData(), saveAllModeFlag);
             }
         }
     }
 
     private void saveFilesToDirectory(final Uri treeUri, final boolean saveAll) {
-        final List<CarvedFile> filesToSave = new ArrayList<>();
-        for (CarvedFileHolder holder : fileHolders) {
-            if (saveAll || holder.isSelected()) {
-                filesToSave.add(holder.getCarvedFile());
+        final List<RecoveredEntry> toSave = new ArrayList<>();
+        for (RecoveredEntryHolder h : entryHolders) {
+            if (saveAll || h.getEntry().isSelected()) {
+                toSave.add(h.getEntry());
             }
         }
 
-        if (filesToSave.isEmpty()) return;
+        if (toSave.isEmpty()) return;
 
-        Toast.makeText(this, "מתחיל שמירת " + filesToSave.size() + " קבצים...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "שומר " + toSave.size() + " קבצים...", Toast.LENGTH_SHORT).show();
 
         new Thread(new Runnable() {
             @Override
             public void run() {
                 ContentResolver resolver = getContentResolver();
                 int successCount = 0;
-
-                for (int i = 0; i < filesToSave.size(); i++) {
-                    CarvedFile cf = filesToSave.get(i);
-                    String fileName = "recovered_" + (i + 1) + "_" + cf.getOffset() + "." + cf.getType().getName().toLowerCase();
+                for (int i = 0; i < toSave.size(); i++) {
+                    RecoveredEntry entry = toSave.get(i);
                     try {
-                        Uri docUri = DocumentsContract.createDocument(resolver, treeUri, cf.getType().getMimeType(), fileName);
+                        Uri docUri = DocumentsContract.createDocument(resolver, treeUri, entry.getType().getMimeType(), entry.getName());
                         if (docUri != null) {
                             try (OutputStream out = resolver.openOutputStream(docUri)) {
                                 if (out != null) {
-                                    long remaining = cf.getLength();
-                                    long offset = cf.getOffset();
-                                    byte[] buffer = new byte[32768];
+                                    long remaining = entry.getLength();
+                                    long offset = entry.getOffset();
+                                    byte[] buf = new byte[32768];
                                     while (remaining > 0) {
-                                        int toRead = (int) Math.min(buffer.length, remaining);
-                                        int read = byteSource.readAt(offset, buffer, toRead);
+                                        int toRead = (int) Math.min(buf.length, remaining);
+                                        int read = byteSource.readAt(offset, buf, toRead);
                                         if (read <= 0) break;
-                                        out.write(buffer, 0, read);
+                                        out.write(buf, 0, read);
                                         offset += read;
                                         remaining -= read;
                                     }
@@ -426,43 +417,39 @@ public class ScanActivity extends Activity {
                                 }
                             }
                         }
-                    } catch (Exception ignored) {
-                    }
+                    } catch (Exception ignored) {}
                 }
 
                 final int finalSuccess = successCount;
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
-                        Toast.makeText(ScanActivity.this, getString(R.string.saved_success) + " (" + finalSuccess + "/" + filesToSave.size() + ")", Toast.LENGTH_LONG).show();
+                        Toast.makeText(ScanActivity.this, getString(R.string.saved_success) + " (" + finalSuccess + "/" + toSave.size() + ")", Toast.LENGTH_LONG).show();
                     }
                 });
             }
         }).start();
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        isCancelled = true;
-        if (scanThread != null) {
-            scanThread.interrupt();
+    private class RecoveredEntryHolder {
+        private final RecoveredEntry entry;
+        public RecoveredEntryHolder(RecoveredEntry entry) {
+            this.entry = entry;
         }
-        if (byteSource != null) {
-            byteSource.close();
+        public RecoveredEntry getEntry() {
+            return entry;
         }
     }
 
-    private class CarvedFileListAdapter extends BaseAdapter {
-
+    private class RecoveredEntryAdapter extends BaseAdapter {
         @Override
         public int getCount() {
-            return fileHolders.size();
+            return entryHolders.size();
         }
 
         @Override
         public Object getItem(int position) {
-            return fileHolders.get(position);
+            return entryHolders.get(position);
         }
 
         @Override
@@ -499,12 +486,11 @@ public class ScanActivity extends Activity {
 
                 LinearLayout textLayout = new LinearLayout(ScanActivity.this);
                 textLayout.setOrientation(LinearLayout.VERTICAL);
-                LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
+                itemLayout.addView(textLayout, new LinearLayout.LayoutParams(
                         0,
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         1.0f
-                );
-                itemLayout.addView(textLayout, textParams);
+                ));
 
                 TextView tvName = new TextView(ScanActivity.this);
                 tvName.setTextSize(15);
@@ -527,38 +513,31 @@ public class ScanActivity extends Activity {
                 holder = (ViewHolder) itemLayout.getTag();
             }
 
-            final CarvedFileHolder cfh = fileHolders.get(position);
-            final CarvedFile cf = cfh.getCarvedFile();
+            final RecoveredEntryHolder eh = entryHolders.get(position);
+            final RecoveredEntry entry = eh.getEntry();
 
-            holder.checkBox.setChecked(cfh.isSelected());
+            holder.checkBox.setChecked(entry.isSelected());
             holder.checkBox.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    cfh.setSelected(holder.checkBox.isChecked());
+                    entry.setSelected(holder.checkBox.isChecked());
                 }
             });
 
-            holder.tvName.setText(cf.getType().getName() + " • אופסט: " + cf.getOffset());
-            holder.tvDetails.setText("גודל: " + formatSize(cf.getLength()));
+            String statusTag = entry.isDeleted() ? " [מחוק]" : "";
+            holder.tvName.setText(entry.getPath() + "/" + entry.getName() + statusTag);
+            holder.tvDetails.setText("גודל: " + formatSize(entry.getLength()) + " • " + entry.getType().getName());
 
             holder.ivThumb.setImageBitmap(null);
-            if (cf.getType() == FileType.JPEG || cf.getType() == FileType.PNG) {
+            if (entry.getType() == FileType.JPEG || entry.getType() == FileType.PNG) {
                 try {
-                    byte[] thumbBuf = new byte[(int) Math.min(cf.getLength(), 65536)];
-                    int read = byteSource.readAt(cf.getOffset(), thumbBuf, thumbBuf.length);
+                    byte[] thumbBuf = new byte[(int) Math.min(entry.getLength(), 16384)];
+                    int read = byteSource.readAt(entry.getOffset(), thumbBuf, thumbBuf.length);
                     if (read > 0) {
-                        BitmapFactory.Options opts = new BitmapFactory.Options();
-                        opts.inSampleSize = 2;
-                        Bitmap bmp = BitmapFactory.decodeByteArray(thumbBuf, 0, read, opts);
-                        if (bmp != null) {
-                            holder.ivThumb.setImageBitmap(bmp);
-                        } else {
-                            holder.ivThumb.setBackgroundColor(0xFFE0E0E0);
-                        }
+                        Bitmap bmp = BitmapFactory.decodeByteArray(thumbBuf, 0, read);
+                        if (bmp != null) holder.ivThumb.setImageBitmap(bmp);
                     }
-                } catch (Exception e) {
-                    holder.ivThumb.setBackgroundColor(0xFFE0E0E0);
-                }
+                } catch (Exception ignored) {}
             } else {
                 holder.ivThumb.setBackgroundColor(0xFFE3F2FD);
             }
