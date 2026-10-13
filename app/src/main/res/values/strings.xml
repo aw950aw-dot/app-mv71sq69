@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">SD Rescue</string>
+    <string name="select_image_file">בחר קובץ אימג\'</string>
+    <string name="no_file_selected">לא נבחר קובץ</string>
+    <string name="file_name_label">שם הקובץ: </string>
+    <string name="file_size_label">גודל הקובץ: </string>
+    <string name="error_opening_file">שגיאה בפתיחת הקובץ</string>
+</resources>
