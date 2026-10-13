@@ -18,9 +18,11 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class UsbMassStorageSource implements ByteSource {
 
@@ -43,6 +45,11 @@ public class UsbMassStorageSource implements ByteSource {
 
     private static final int CBW_SIGNATURE = 0x43425355;
     private static final int CSW_SIGNATURE = 0x53425355;
+
+    private static final int MAX_TRANSFER_CHUNK = 16384;
+    private static final int MAX_SECTORS_PER_COMMAND = 128; // 64KB at 512 bytes
+
+    private final ReentrantLock usbLock = new ReentrantLock();
 
     private static final List<String> diagnosticLogs = new ArrayList<>();
 
@@ -80,96 +87,98 @@ public class UsbMassStorageSource implements ByteSource {
     }
 
     private void initConnection() throws IOException {
-        if (!usbManager.hasPermission(device)) {
-            logDiag("Device lacks USB permission. Requesting permission...");
-            requestPermissionSync();
-        } else {
-            logDiag("USB permission already granted.");
-        }
-
-        if (!usbManager.hasPermission(device)) {
-            logDiag("FATAL: USB permission denied by user or system.");
-            throw new IOException("USB permission denied");
-        }
-
-        // Find Mass Storage Interface (Class 0x08, Subclass 0x06, Protocol 0x50)
-        for (int i = 0; i < device.getInterfaceCount(); i++) {
-            UsbInterface intf = device.getInterface(i);
-            int iclass = intf.getInterfaceClass();
-            int isub = intf.getInterfaceSubclass();
-            int iproto = intf.getInterfaceProtocol();
-            logDiag("Interface " + i + ": class=0x" + Integer.toHexString(iclass) +
-                    ", subclass=0x" + Integer.toHexString(isub) +
-                    ", proto=0x" + Integer.toHexString(iproto) +
-                    ", endpoints=" + intf.getEndpointCount());
-
-            if (iclass == 0x08 && isub == 0x06 && iproto == 0x50) {
-                usbInterface = intf;
-                logDiag("-> Selected standard BOT mass storage interface at index " + i);
-                break;
+        usbLock.lock();
+        try {
+            if (!usbManager.hasPermission(device)) {
+                logDiag("Device lacks USB permission. Requesting permission...");
+                requestPermissionSync();
+            } else {
+                logDiag("USB permission already granted.");
             }
-        }
 
-        if (usbInterface == null) {
+            if (!usbManager.hasPermission(device)) {
+                logDiag("FATAL: USB permission denied by user or system.");
+                throw new IOException("USB permission denied");
+            }
+
+            // Find Mass Storage Interface
             for (int i = 0; i < device.getInterfaceCount(); i++) {
                 UsbInterface intf = device.getInterface(i);
-                if (intf.getInterfaceClass() == 0x08) {
+                int iclass = intf.getInterfaceClass();
+                int isub = intf.getInterfaceSubclass();
+                int iproto = intf.getInterfaceProtocol();
+                logDiag("Interface " + i + ": class=0x" + Integer.toHexString(iclass) +
+                        ", subclass=0x" + Integer.toHexString(isub) +
+                        ", proto=0x" + Integer.toHexString(iproto) +
+                        ", endpoints=" + intf.getEndpointCount());
+
+                if (iclass == 0x08 && isub == 0x06 && iproto == 0x50) {
                     usbInterface = intf;
-                    logDiag("-> Fallback: Selected mass storage class interface at index " + i);
+                    logDiag("-> Selected standard BOT mass storage interface at index " + i);
                     break;
                 }
             }
-        }
 
-        if (usbInterface == null && device.getInterfaceCount() > 0) {
-            usbInterface = device.getInterface(0);
-            logDiag("-> Fallback: Selected first available interface index 0");
-        }
-
-        if (usbInterface == null) {
-            logDiag("FATAL: No suitable USB interface found.");
-            throw new IOException("No suitable USB Mass Storage interface found");
-        }
-
-        for (int i = 0; i < usbInterface.getEndpointCount(); i++) {
-            UsbEndpoint ep = usbInterface.getEndpoint(i);
-            String dir = (ep.getDirection() == UsbConstants.USB_DIR_IN) ? "IN" : "OUT";
-            String type = (ep.getType() == UsbConstants.USB_ENDPOINT_XFER_BULK) ? "BULK" : "OTHER";
-            logDiag("Endpoint " + i + ": dir=" + dir + ", type=" + type + ", addr=0x" + Integer.toHexString(ep.getAddress()));
-
-            if (ep.getType() == UsbConstants.USB_ENDPOINT_XFER_BULK) {
-                if (ep.getDirection() == UsbConstants.USB_DIR_IN) {
-                    epIn = ep;
-                } else if (ep.getDirection() == UsbConstants.USB_DIR_OUT) {
-                    epOut = ep;
+            if (usbInterface == null) {
+                for (int i = 0; i < device.getInterfaceCount(); i++) {
+                    UsbInterface intf = device.getInterface(i);
+                    if (intf.getInterfaceClass() == 0x08) {
+                        usbInterface = intf;
+                        logDiag("-> Fallback: Selected mass storage class interface at index " + i);
+                        break;
+                    }
                 }
             }
+
+            if (usbInterface == null && device.getInterfaceCount() > 0) {
+                usbInterface = device.getInterface(0);
+                logDiag("-> Fallback: Selected first available interface index 0");
+            }
+
+            if (usbInterface == null) {
+                logDiag("FATAL: No suitable USB interface found.");
+                throw new IOException("No suitable USB Mass Storage interface found");
+            }
+
+            for (int i = 0; i < usbInterface.getEndpointCount(); i++) {
+                UsbEndpoint ep = usbInterface.getEndpoint(i);
+                String dir = (ep.getDirection() == UsbConstants.USB_DIR_IN) ? "IN" : "OUT";
+                String type = (ep.getType() == UsbConstants.USB_ENDPOINT_XFER_BULK) ? "BULK" : "OTHER";
+                logDiag("Endpoint " + i + ": dir=" + dir + ", type=" + type + ", addr=0x" + Integer.toHexString(ep.getAddress()));
+
+                if (ep.getType() == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                    if (ep.getDirection() == UsbConstants.USB_DIR_IN) {
+                        epIn = ep;
+                    } else if (ep.getDirection() == UsbConstants.USB_DIR_OUT) {
+                        epOut = ep;
+                    }
+                }
+            }
+
+            if (epIn == null || epOut == null) {
+                logDiag("FATAL: Bulk IN or OUT endpoints missing. epIn=" + (epIn != null) + ", epOut=" + (epOut != null));
+                throw new IOException("USB bulk endpoints not found");
+            }
+
+            connection = usbManager.openDevice(device);
+            if (connection == null) {
+                logDiag("FATAL: usbManager.openDevice(device) returned null!");
+                throw new IOException("Failed to open USB device connection");
+            }
+            logDiag("Device connection opened successfully.");
+
+            boolean claimed = connection.claimInterface(usbInterface, true);
+            logDiag("claimInterface result: " + claimed);
+            if (!claimed) {
+                connection.close();
+                throw new IOException("Failed to claim USB interface");
+            }
+
+            getMaxLun();
+            initStorageCommandsWithRetry();
+        } finally {
+            usbLock.unlock();
         }
-
-        if (epIn == null || epOut == null) {
-            logDiag("FATAL: Bulk IN or OUT endpoints missing. epIn=" + (epIn != null) + ", epOut=" + (epOut != null));
-            throw new IOException("USB bulk endpoints not found");
-        }
-
-        connection = usbManager.openDevice(device);
-        if (connection == null) {
-            logDiag("FATAL: usbManager.openDevice(device) returned null!");
-            throw new IOException("Failed to open USB device connection");
-        }
-        logDiag("Device connection opened successfully.");
-
-        boolean claimed = connection.claimInterface(usbInterface, true);
-        logDiag("claimInterface result: " + claimed);
-        if (!claimed) {
-            connection.close();
-            throw new IOException("Failed to claim USB interface");
-        }
-
-        // Get Max LUN (Class-specific request, bmRequestType = 0xA1, bRequest = 0xFE)
-        getMaxLun();
-
-        // Initialize device commands with retries
-        initStorageCommandsWithRetry();
     }
 
     private void requestPermissionSync() throws IOException {
@@ -223,8 +232,8 @@ public class UsbMassStorageSource implements ByteSource {
 
     private void getMaxLun() {
         try {
-            int requestType = 0xA1; // Device-to-host, class, interface
-            int request = 0xFE; // GET_MAX_LUN
+            int requestType = 0xA1;
+            int request = 0xFE;
             int value = 0;
             int index = usbInterface.getId();
             byte[] buffer = new byte[1];
@@ -234,38 +243,35 @@ public class UsbMassStorageSource implements ByteSource {
                 lun = (byte) (buffer[0] & 0xFF);
             } else {
                 lun = 0;
-                logDiag("GET_MAX_LUN failed or unsupported; assuming LUN 0.");
             }
         } catch (Exception e) {
             lun = 0;
-            logDiag("GET_MAX_LUN exception: " + e.getMessage() + "; assuming LUN 0.");
         }
     }
 
-    private void bulkOnlyReset() {
+    private void bulkOnlyResetAndClear() {
         try {
-            int bmRequestType = 0x21; // Host to device, class, interface
-            int bRequest = 0xFF; // RESET
+            // Bulk-Only Mass Storage Reset: bmRequestType = 0x21, bRequest = 0xFF, wValue = 0, wIndex = interface number
+            int bmRequestType = 0x21;
+            int bRequest = 0xFF;
             int wValue = 0;
             int wIndex = usbInterface.getId();
             byte[] buffer = new byte[0];
-            int res = connection.controlTransfer(bmRequestType, bRequest, wValue, wIndex, buffer, 0, 3000);
-            logDiag("Bulk Only Reset controlTransfer result: " + res);
+            connection.controlTransfer(bmRequestType, bRequest, wValue, wIndex, buffer, 0, 3000);
 
             int requestTypeOut = 0x02; // Endpoint clear feature
-            int requestClearFeature = 0x01; // CLEAR_FEATURE
-            int featureHalt = 0x00; // ENDPOINT_HALT
+            int requestClearFeature = 0x01;
+            int featureHalt = 0x00;
 
             if (epIn != null) {
-                int resIn = connection.controlTransfer(requestTypeOut, requestClearFeature, featureHalt, epIn.getAddress(), new byte[0], 0, 2000);
-                logDiag("Clear stall epIn result: " + resIn);
+                connection.controlTransfer(requestTypeOut, requestClearFeature, featureHalt, epIn.getAddress(), new byte[0], 0, 2000);
             }
             if (epOut != null) {
-                int resOut = connection.controlTransfer(requestTypeOut, requestClearFeature, featureHalt, epOut.getAddress(), new byte[0], 0, 2000);
-                logDiag("Clear stall epOut result: " + resOut);
+                connection.controlTransfer(requestTypeOut, requestClearFeature, featureHalt, epOut.getAddress(), new byte[0], 0, 2000);
             }
+            logDiag("Executed Bulk-Only Mass Storage Reset and cleared stalls.");
         } catch (Exception e) {
-            logDiag("bulkOnlyReset exception: " + e.getMessage());
+            logDiag("bulkOnlyResetAndClear exception: " + e.getMessage());
         }
     }
 
@@ -290,7 +296,7 @@ public class UsbMassStorageSource implements ByteSource {
         return sent == 31;
     }
 
-    private boolean receiveCsw(int expectedTag) {
+    private boolean receiveCsw(int expectedTag, long expectedDataLength) {
         byte[] cswBuffer = new byte[13];
         int received = connection.bulkTransfer(epIn, cswBuffer, 13, 5000);
         if (received != 13) {
@@ -305,8 +311,10 @@ public class UsbMassStorageSource implements ByteSource {
         int residue = csw.getInt();
         byte status = csw.get();
 
+        // Verify that CSW signature is "USBS" (0x53425355), that CSW tag equals CBW tag
         if (sig != CSW_SIGNATURE || tag != expectedTag || status != 0) {
-            logDiag("CSW invalid: sig=0x" + Integer.toHexString(sig) + ", tag=" + tag + ", status=" + status);
+            logDiag("CSW invalid: sig=0x" + Integer.toHexString(sig) + " (expected 0x" + Integer.toHexString(CSW_SIGNATURE) + 
+                    "), tag=" + tag + " (expected " + expectedTag + "), status=" + status);
             if (status != 0) {
                 requestSense();
             }
@@ -315,69 +323,56 @@ public class UsbMassStorageSource implements ByteSource {
         return true;
     }
 
+    private void requestSense() {
+        byte[] cdb = new byte[]{ 0x03, 0, 0, 0, (byte)0x12, 0 };
+        int tag = tagCounter++;
+        byte[] data = new byte[18];
+        if (sendCbw(tag, 18, 0x80, lun, cdb)) {
+            connection.bulkTransfer(epIn, data, 18, 3000);
+            receiveCsw(tag, 18);
+        }
+    }
+
     private void initStorageCommandsWithRetry() throws IOException {
         IOException lastEx = null;
-        for (int attempt = 1; attempt <= 5; attempt++) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
             try {
-                logDiag("Initialization attempt " + attempt + "/5...");
                 inquiry();
                 testUnitReady();
                 readCapacity();
-                logDiag("Storage initialized successfully on attempt " + attempt);
                 return;
             } catch (IOException e) {
                 lastEx = e;
-                logDiag("Attempt " + attempt + " failed: " + e.getMessage());
-                bulkOnlyReset();
+                bulkOnlyResetAndClear();
                 try {
-                    Thread.sleep(500);
+                    Thread.sleep(200);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     break;
                 }
             }
         }
-        throw lastEx != null ? lastEx : new IOException("Failed to initialize USB storage after 5 attempts");
+        throw lastEx != null ? lastEx : new IOException("Failed to initialize USB storage");
     }
 
     private void inquiry() throws IOException {
         byte[] cdb = new byte[]{ (byte)0x12, 0, 0, 0, (byte)0x24, 0 };
         int tag = tagCounter++;
         byte[] data = new byte[36];
-
-        synchronized (this) {
-            if (!sendCbw(tag, 36, 0x80, lun, cdb)) {
-                throw new IOException("INQUIRY CBW failed");
-            }
-            int read = connection.bulkTransfer(epIn, data, 36, 5000);
-            if (!receiveCsw(tag)) {
-                throw new IOException("INQUIRY CSW failed");
-            }
-            logDiag("INQUIRY succeeded, read " + read + " bytes.");
+        if (!sendCbw(tag, 36, 0x80, lun, cdb)) {
+            throw new IOException("INQUIRY CBW failed");
+        }
+        connection.bulkTransfer(epIn, data, 36, 5000);
+        if (!receiveCsw(tag, 36)) {
+            throw new IOException("INQUIRY CSW failed");
         }
     }
 
     private void testUnitReady() throws IOException {
         byte[] cdb = new byte[]{ 0, 0, 0, 0, 0, 0 };
         int tag = tagCounter++;
-        synchronized (this) {
-            if (!sendCbw(tag, 0, 0x00, lun, cdb) || !receiveCsw(tag)) {
-                throw new IOException("TEST UNIT READY failed");
-            }
-            logDiag("TEST UNIT READY succeeded.");
-        }
-    }
-
-    private void requestSense() {
-        byte[] cdb = new byte[]{ 0x03, 0, 0, 0, (byte)0x12, 0 };
-        int tag = tagCounter++;
-        byte[] data = new byte[18];
-        synchronized (this) {
-            if (sendCbw(tag, 18, 0x80, lun, cdb)) {
-                connection.bulkTransfer(epIn, data, 18, 3000);
-                receiveCsw(tag);
-                logDiag("REQUEST SENSE executed.");
-            }
+        if (!sendCbw(tag, 0, 0x00, lun, cdb) || !receiveCsw(tag, 0)) {
+            throw new IOException("TEST UNIT READY failed");
         }
     }
 
@@ -385,25 +380,22 @@ public class UsbMassStorageSource implements ByteSource {
         byte[] cdb = new byte[]{ (byte)0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         int tag = tagCounter++;
         byte[] data = new byte[8];
-
-        synchronized (this) {
-            if (!sendCbw(tag, 8, 0x80, lun, cdb)) {
-                throw new IOException("READ CAPACITY CBW failed");
-            }
-            int read = connection.bulkTransfer(epIn, data, 8, 5000);
-            if (!receiveCsw(tag) || read != 8) {
-                throw new IOException("READ CAPACITY failed or incomplete read");
-            }
-
-            ByteBuffer bb = ByteBuffer.wrap(data);
-            bb.order(ByteOrder.BIG_ENDIAN);
-            long lastLba = bb.getInt() & 0xFFFFFFFFL;
-            long blockLen = bb.getInt() & 0xFFFFFFFFL;
-            if (blockLen > 0) sectorSize = blockLen;
-            totalSectors = lastLba + 1;
-            totalSize = totalSectors * sectorSize;
-            logDiag("Read Capacity: lastLba=" + lastLba + ", sectorSize=" + sectorSize + ", totalSize=" + totalSize);
+        if (!sendCbw(tag, 8, 0x80, lun, cdb)) {
+            throw new IOException("READ CAPACITY CBW failed");
         }
+        int read = connection.bulkTransfer(epIn, data, 8, 5000);
+        if (!receiveCsw(tag, 8) || read != 8) {
+            throw new IOException("READ CAPACITY failed");
+        }
+
+        ByteBuffer bb = ByteBuffer.wrap(data);
+        bb.order(ByteOrder.BIG_ENDIAN);
+        long lastLba = bb.getInt() & 0xFFFFFFFFL;
+        long blockLen = bb.getInt() & 0xFFFFFFFFL;
+        if (blockLen > 0) sectorSize = blockLen;
+        totalSectors = lastLba + 1;
+        totalSize = totalSectors * sectorSize;
+        logDiag("Read Capacity: lastLba=" + lastLba + ", sectorSize=" + sectorSize + ", totalSize=" + totalSize);
     }
 
     @Override
@@ -419,59 +411,79 @@ public class UsbMassStorageSource implements ByteSource {
         int sectorOffset = (int) (offset % sectorSize);
         int sectorsToRead = (int) ((len + sectorOffset + sectorSize - 1) / sectorSize);
 
-        int maxSectorsPerTransfer = 256;
-        if (sectorsToRead > maxSectorsPerTransfer) {
-            sectorsToRead = maxSectorsPerTransfer;
+        if (sectorsToRead > MAX_SECTORS_PER_COMMAND) {
+            sectorsToRead = MAX_SECTORS_PER_COMMAND;
         }
 
         long bytesToTransfer = sectorsToRead * sectorSize;
         byte[] sectorBuffer = new byte[(int) bytesToTransfer];
 
         boolean success = false;
-        for (int retry = 0; retry < 5; retry++) {
-            synchronized (this) {
+        usbLock.lock();
+        try {
+            for (int retry = 0; retry < 3; retry++) {
                 int tag = tagCounter++;
                 byte[] cdb;
 
-                if (sectorIndex > 0xFFFFFFFFL || sectorsToRead > 0xFFFF) {
+                // Rule 3: Use READ(16) (opcode 0x88) for cards over 2TB (or sectorIndex > 0xFFFFFFFFL) and READ(10) otherwise
+                if (sectorIndex > 0xFFFFFFFFL || sectorsToRead > 0xFFFF || totalSectors > 0xFFFFFFFFL) {
                     cdb = new byte[16];
-                    cdb[0] = (byte) 0x88;
+                    cdb[0] = (byte) 0x88; // READ(16)
                     ByteBuffer.wrap(cdb, 2, 8).order(ByteOrder.BIG_ENDIAN).putLong(sectorIndex);
                     ByteBuffer.wrap(cdb, 10, 4).order(ByteOrder.BIG_ENDIAN).putInt(sectorsToRead);
                 } else {
                     cdb = new byte[10];
-                    cdb[0] = (byte) 0x28;
+                    cdb[0] = (byte) 0x28; // READ(10)
                     ByteBuffer.wrap(cdb, 2, 4).order(ByteOrder.BIG_ENDIAN).putInt((int) sectorIndex);
                     ByteBuffer.wrap(cdb, 7, 2).order(ByteOrder.BIG_ENDIAN).putShort((short) sectorsToRead);
                 }
 
-                if (sendCbw(tag, bytesToTransfer, 0x80, lun, cdb)) {
-                    int totalRead = 0;
-                    long deadline = System.currentTimeMillis() + 8000;
-                    while (totalRead < bytesToTransfer && System.currentTimeMillis() < deadline) {
-                        int chunkRead = connection.bulkTransfer(epIn, sectorBuffer, totalRead, (int) (deadline - System.currentTimeMillis()));
-                        if (chunkRead <= 0) break;
-                        totalRead += chunkRead;
-                    }
+                // Send CBW with 5000ms timeout
+                if (!sendCbw(tag, bytesToTransfer, 0x80, lun, cdb)) {
+                    bulkOnlyResetAndClear();
+                    continue;
+                }
 
-                    if (receiveCsw(tag)) {
-                        success = true;
+                // Rule 1: Never call bulkTransfer with more than 16384 bytes. Data stage in loop of <= 16384 bytes chunks.
+                int totalRead = 0;
+                long deadline = System.currentTimeMillis() + 15000; // Rule 4: 15000 ms for data stage
+                boolean dataTransferOk = true;
+
+                while (totalRead < bytesToTransfer && System.currentTimeMillis() < deadline) {
+                    int chunkSize = (int) Math.min(MAX_TRANSFER_CHUNK, bytesToTransfer - totalRead);
+                    byte[] chunkBuf = new byte[chunkSize];
+
+                    int chunkRead = connection.bulkTransfer(epIn, chunkBuf, chunkSize, (int) (deadline - System.currentTimeMillis()));
+                    if (chunkRead <= 0) {
+                        dataTransferOk = false;
                         break;
                     }
+
+                    System.arraycopy(chunkBuf, 0, sectorBuffer, totalRead, chunkRead);
+                    totalRead += chunkRead;
                 }
-                bulkOnlyReset();
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
+
+                if (!dataTransferOk || totalRead < bytesToTransfer) {
+                    bulkOnlyResetAndClear();
+                    continue;
                 }
+
+                // Receive CSW with 5000ms timeout
+                if (!receiveCsw(tag, bytesToTransfer)) {
+                    bulkOnlyResetAndClear();
+                    continue;
+                }
+
+                success = true;
+                break;
             }
+        } finally {
+            usbLock.unlock();
         }
 
         if (!success) {
-            logDiag("Unreadable sector block at offset " + offset + ", filling with zeros.");
-            java.util.Arrays.fill(sectorBuffer, (byte) 0);
+            logDiag("Failed read at offset " + offset + " after 3 retries, filling with zeros.");
+            Arrays.fill(sectorBuffer, (byte) 0);
         }
 
         int copyLen = Math.min(len, (int) (bytesToTransfer - sectorOffset));
@@ -483,12 +495,20 @@ public class UsbMassStorageSource implements ByteSource {
 
     @Override
     public void close() {
+        usbLock.lock();
         try {
             if (connection != null && usbInterface != null) {
-                connection.releaseInterface(usbInterface);
-                connection.close();
-                logDiag("USB connection closed.");
+                try {
+                    connection.releaseInterface(usbInterface);
+                } catch (Exception ignored) {}
+                try {
+                    connection.close();
+                } catch (Exception ignored) {}
+                connection = null;
+                logDiag("USB connection closed cleanly.");
             }
-        } catch (Exception ignored) {}
+        } finally {
+            usbLock.unlock();
+        }
     }
 }
