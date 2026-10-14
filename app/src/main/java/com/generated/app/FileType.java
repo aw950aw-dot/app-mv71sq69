@@ -47,11 +47,13 @@ public enum FileType {
 
     public static String safeName(FileType type) {
         if (type == null) return "UNKNOWN";
-        return type.getName();
+        String n = type.getName();
+        return n != null ? n : "UNKNOWN";
     }
 
     public static String safeMimeType(FileType type) {
         if (type == null) return "application/octet-stream";
-        return type.getMimeType();
+        String m = type.getMimeType();
+        return m != null ? m : "application/octet-stream";
     }
 }

@@ -2,7 +2,6 @@ package com.generated.app;
 
 public class FileTypeTest {
     public static void runUnitTests() {
-        // Rule 7: Unit test for file type lookup returning UNKNOWN (never null)
         ByteSource dummySource = new ByteSource() {
             @Override
             public long getSize() { return 1024; }
@@ -12,6 +11,7 @@ public class FileTypeTest {
             public void close() {}
         };
 
+        // Rule 7 Unit Tests
         FileType t1 = FileTypeDetector.detectTypeByNameOrHeader(dummySource, "", 0, 0);
         assert t1 == FileType.UNKNOWN : "Test failed for empty filename";
 

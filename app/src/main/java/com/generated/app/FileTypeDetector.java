@@ -9,7 +9,6 @@ public class FileTypeDetector {
             return FileType.UNKNOWN;
         }
 
-        // Rule 1: Check extension strictly. Must be lowercase only, no uppercase extensions allowed.
         int lastDot = fileName.lastIndexOf('.');
         if (lastDot == -1 || lastDot == fileName.length() - 1) {
             return FileType.UNKNOWN;
@@ -32,7 +31,6 @@ public class FileTypeDetector {
         if (lowerExt.equals("wav")) return FileType.WAV;
         if (lowerExt.equals("mp4") || lowerExt.equals("m4a")) return FileType.MP4;
 
-        // Fallback to signature check at offset if extension is unrecognized or generic
         try {
             byte[] header = new byte[16];
             int read = source.readAt(offset, header, 16);

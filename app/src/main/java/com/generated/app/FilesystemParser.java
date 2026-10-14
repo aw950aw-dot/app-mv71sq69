@@ -97,15 +97,16 @@ public class FilesystemParser {
                 }
 
                 // Rule 4: Backup boot sector logic (e.g. partition starts at 2048, but valid FAT32 BPB is found at 2048+6 backup)
+                // Keep volume start strictly at partOff (e.g. 2048) and never 2054.
                 long backupFat32Off = partOff + 6 * 512;
                 if (backupFat32Off + 512 <= totalSize && source.readAt(backupFat32Off, bootSector, 512) == 512 && isValidFat32(bootSector)) {
                     DiagnosticReporter.setBackupBootSectorUsed("זוהה מקטע איתחול מגובי ב-LBA " + (backupFat32Off / 512) + " (תוך שמירת תחילת נפח ב-LBA " + (partOff / 512) + ")");
-                    candidateEntries = parseFat32(source, partOff, bootSector, false, skippedLogBuilder, callback); // Keep volume start at partOff (2048)
+                    candidateEntries = parseFat32(source, partOff, bootSector, false, skippedLogBuilder, callback);
                     if (!candidateEntries.isEmpty()) {
                         if (candidateEntries.size() > maxFilesFound) {
                             maxFilesFound = candidateEntries.size();
                             bestEntries = candidateEntries;
-                            bestMethod = "מערכת קבצים FAT32 מגובי ב-Backup Sector (LBA " + (partOff / 512) + ")";
+                            bestMethod = "מערכת קבצים FAT32 עם מקטע איתחול מגובי ב-Backup Sector (LBA " + (partOff / 512) + ")";
                         }
                         continue;
                     }
@@ -218,9 +219,8 @@ public class FilesystemParser {
             int reserved = b.getShort(14) & 0xFFFF;
             int numFATs = b.get(16) & 0xFF;
             long sectorsPerFAT = b.getInt(36) & 0xFFFFFFFFL;
-            long rootCluster = b.getInt(44) & 0xFFFFFFFFL;
+            long rootCluster = b.getInt(44) & 0xFFFF;
 
-            // Rule 5: Fill in boot sector fields and root dir LBA
             long fatStartOffset = partOffset + (long) reserved * bytesPerSector;
             long clusterRegionStart = partOffset + (long) reserved * bytesPerSector + (long) numFATs * sectorsPerFAT * bytesPerSector;
             long clusterSize = (long) sectorsPerCluster * bytesPerSector;
@@ -303,7 +303,7 @@ public class FilesystemParser {
                         System.arraycopy(clusterData, i, rawNameBytes, 0, 11);
 
                         long fileDataOffset = clusterRegionStart + (fileCluster - 2) * clusterSize;
-                        FileType type = isDir ? null : FileTypeDetector.detectTypeByNameOrHeader(source, resolvedName, fileDataOffset, fileLength);
+                        FileType type = isDir ? FileType.UNKNOWN : FileTypeDetector.detectTypeByNameOrHeader(source, resolvedName, fileDataOffset, fileLength);
 
                         RecoveredEntry entry = new RecoveredEntry(resolvedName, currentPath, fileDataOffset, fileLength, type, false, isDir, modTime, rawNameBytes);
                         entries.add(entry);
@@ -411,7 +411,7 @@ public class FilesystemParser {
                         if (name.isEmpty() || name.equals(".") || name.equals("..")) continue;
 
                         long fileDataOffset = clusterHeapStart + (startingCluster - 2) * clusterSize;
-                        FileType type = isDir ? null : FileTypeDetector.detectTypeByNameOrHeader(source, name, fileDataOffset, dataLength);
+                        FileType type = isDir ? FileType.UNKNOWN : FileTypeDetector.detectTypeByNameOrHeader(source, name, fileDataOffset, dataLength);
                         byte[] rawNameBytes = name.getBytes(StandardCharsets.UTF_16LE);
 
                         RecoveredEntry entry = new RecoveredEntry(name, currentPath, fileDataOffset, dataLength, type, false, isDir, System.currentTimeMillis(), rawNameBytes);
