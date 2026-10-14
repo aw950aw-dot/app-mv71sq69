@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -354,7 +355,7 @@ public class FilesystemParser {
 
                             DiagnosticReporter.addFirstFile(item.name, item.size);
 
-                            if (item.isDir && item.firstCluster >= 2 && item.firstCluster != currentCluster && !isUnreadableFolder) {
+                            if (item.isDir && item.firstCluster >= 2 && item.firstCluster != currentCluster) {
                                 String subPath = currentPath.equals("/") ? "/" + item.name : currentPath + "/" + item.name;
                                 queue.add(new WorkItem(item.firstCluster, assignedId, subPath));
                             }
