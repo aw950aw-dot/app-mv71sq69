@@ -24,6 +24,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -874,10 +875,9 @@ public class ScanActivity extends Activity {
 
     private void startRestoring(final Uri treeUri, final boolean saveAll) {
         // Rule 6: Warning when destination is on the card being read
-        // Simple heuristic check if treeUri string contains media signature or check path
         Toast.makeText(this, "מתחיל שחזור קבצים ליעד שנבחר...", Toast.LENGTH_SHORT).show();
 
-        new Thread(new Runnable() {
+        Thread restoreThread = new Thread(new Runnable() {
             @Override
             public void run() {
                 ContentResolver resolver = getContentResolver();
@@ -912,7 +912,8 @@ public class ScanActivity extends Activity {
                     }
                 });
             }
-        }.start();
+        });
+        restoreThread.start();
     }
 
     private void saveNodeToDestination(ContentResolver resolver, Uri treeUri, RecoveredEntry node, int[] successCount, List<String> errorLogs) {
@@ -1197,7 +1198,6 @@ public class ScanActivity extends Activity {
             // Rule 2: Tri-state checkbox handling
             holder.checkBox.setChecked(entry.isSelected());
             if (entry.isPartial()) {
-                // If partial state, we can set alpha or check status
                 holder.checkBox.jumpDrawablesToCurrentState();
             }
 
