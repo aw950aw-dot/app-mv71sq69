@@ -1262,7 +1262,7 @@ public class ScanActivity extends Activity {
                         @Override
                         public void onProgress(final long bytesScanned, final long totalBytes) {
                             final int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-                            new Handler(Looper.getMainLocat().getMainLooper()).post(new Runnable() {
+                            new Handler(Looper.getMainLooper()).post(new Runnable() {
                                 @Override
                                 public void run() {
                                     tvStatus.setText("סריקה עמוקה... (" + percent + "%)");
