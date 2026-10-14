@@ -6,13 +6,14 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -24,7 +25,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_OFFSET = "file_offset";
     public static final String COL_MODIFIED = "modified";
     public static final String COL_TYPE = "type";
-    public static final String COL_SELECTED = "selected";
+    public static final String COL_SELECTED = "selected"; // 0=none, 1=selected, 2=partial
+    public static final String COL_RAW_NAME = "raw_name";
 
     private static DatabaseHelper instance;
 
@@ -66,10 +68,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_OFFSET + " INTEGER, " +
                 COL_MODIFIED + " INTEGER, " +
                 COL_TYPE + " TEXT, " +
-                COL_SELECTED + " INTEGER DEFAULT 1)";
+                COL_SELECTED + " INTEGER DEFAULT 0, " +
+                COL_RAW_NAME + " BLOB)";
         db.execSQL(createTable);
         db.execSQL("CREATE INDEX idx_parent ON " + TABLE_NODES + "(" + COL_PARENT_ID + ")");
         db.execSQL("CREATE INDEX idx_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
+        db.execSQL("CREATE INDEX idx_name ON " + TABLE_NODES + "(" + COL_NAME + ")");
     }
 
     @Override
@@ -103,6 +107,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 cv.put(COL_MODIFIED, entry.getModifiedTime());
                 cv.put(COL_TYPE, FileType.safeName(entry.getType()));
                 cv.put(COL_SELECTED, entry.isSelected() ? 1 : 0);
+                cv.put(COL_RAW_NAME, entry.getRawNameBytes());
                 db.insert(TABLE_NODES, null, cv);
             }
             db.setTransactionSuccessful();
@@ -133,7 +138,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             cv.put(COL_OFFSET, 0);
             cv.put(COL_MODIFIED, System.currentTimeMillis());
             cv.put(COL_TYPE, FileType.UNKNOWN.getName());
-            cv.put(COL_SELECTED, 1);
+            cv.put(COL_SELECTED, 0);
+            cv.put(COL_RAW_NAME, new byte[0]);
             return db.insert(TABLE_NODES, null, cv);
         }
 
@@ -160,7 +166,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 cv.put(COL_OFFSET, 0);
                 cv.put(COL_MODIFIED, System.currentTimeMillis());
                 cv.put(COL_TYPE, FileType.UNKNOWN.getName());
-                cv.put(COL_SELECTED, 1);
+                cv.put(COL_SELECTED, 0);
+                cv.put(COL_RAW_NAME, part.getBytes(StandardCharsets.UTF_16LE));
                 currentParentId = db.insert(TABLE_NODES, null, cv);
             }
         }
@@ -174,26 +181,239 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (dirPath == null || dirPath.isEmpty()) dirPath = "/";
         if (!dirPath.startsWith("/")) dirPath = "/" + dirPath;
 
-        Cursor c = db.rawQuery("SELECT " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 500", new String[]{dirPath});
+        // Query nodes WHERE path = dirPath, sorted folders first, then by name
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 500", new String[]{dirPath});
         
         if (c != null) {
             while (c.moveToNext()) {
-                String name = c.getString(0);
-                String path = c.getString(1);
-                long offset = c.getLong(2);
-                long size = c.getLong(3);
-                String typeStr = c.getString(4);
-                boolean isDir = c.getInt(5) == 1;
-                long modified = c.getLong(6);
-                boolean selected = c.getInt(7) == 1;
+                long id = c.getLong(0);
+                String name = c.getString(1);
+                String path = c.getString(2);
+                long offset = c.getLong(3);
+                long size = c.getLong(4);
+                String typeStr = c.getString(5);
+                boolean isDir = c.getInt(6) == 1;
+                long modified = c.getLong(7);
+                int selectedState = c.getInt(8);
+                byte[] rawName = c.getBlob(9);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(name, path, offset, size, type, false, isDir, modified, name.getBytes());
-                entry.setSelected(selected);
+                RecoveredEntry entry = new RecoveredEntry(name, path, offset, size, type, false, isDir, modified, rawName);
+                entry.setSelectedState(selectedState);
+
+                if (isDir) {
+                    // Compute recursive size and file count
+                    String subPath = path.equals("/") ? "/" + name : path + "/" + name;
+                    long[] stats = getRecursiveStats(db, subPath);
+                    entry.setCachedRecursiveSize(stats[0]);
+                    entry.setCachedRecursiveFileCount((int) stats[1]);
+                }
+
+                list.add(entry);
+            }
+            c.close();
+        }
+        return list;
+    }
+
+    private long[] getRecursiveStats(SQLiteDatabase db, String dirPath) {
+        long totalSize = 0;
+        int fileCount = 0;
+        Cursor c = db.rawQuery("SELECT " + COL_SIZE + ", " + COL_IS_DIR + ", " + COL_NAME + ", " + COL_PATH + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + " LIKE ?", new String[]{dirPath + "%"});
+        if (c != null) {
+            while (c.moveToNext()) {
+                boolean isDir = c.getInt(1) == 1;
+                if (!isDir) {
+                    totalSize += c.getLong(0);
+                    fileCount++;
+                }
+            }
+            c.close();
+        }
+        return new long[]{totalSize, fileCount};
+    }
+
+    public synchronized List<RecoveredEntry> searchNodes(String query) {
+        List<RecoveredEntry> list = new ArrayList<>();
+        if (query == null || query.trim().isEmpty()) return list;
+        SQLiteDatabase db = getReadableDatabase();
+        String pattern = "%" + query.trim() + "%";
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + " FROM " + TABLE_NODES + " WHERE " + COL_NAME + " LIKE ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 100", new String[]{pattern});
+        if (c != null) {
+            while (c.moveToNext()) {
+                String name = c.getString(1);
+                String path = c.getString(2);
+                long offset = c.getLong(3);
+                long size = c.getLong(4);
+                String typeStr = c.getString(5);
+                boolean isDir = c.getInt(6) == 1;
+                long modified = c.getLong(7);
+                int selectedState = c.getInt(8);
+                byte[] rawName = c.getBlob(9);
+
+                FileType type = FileType.UNKNOWN;
+                try {
+                    type = FileType.valueOf(typeStr);
+                } catch (Exception ignored) {}
+
+                RecoveredEntry entry = new RecoveredEntry(name, path, offset, size, type, false, isDir, modified, rawName);
+                entry.setSelectedState(selectedState);
+                list.add(entry);
+            }
+            c.close();
+        }
+        return list;
+    }
+
+    public synchronized void setNodeAndSubtreeSelected(RecoveredEntry entry, int selectedState) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            // Update node itself
+            String fullPath = entry.getPath().equals("/") ? "/" + entry.getName() : entry.getPath() + "/" + entry.getName();
+            db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new Object[]{selectedState, entry.getPath(), entry.getName()});
+
+            if (entry.isDirectory()) {
+                // Update all descendants using recursive LIKE
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + " LIKE ?", new Object[]{selectedState, fullPath + "%"});
+            }
+
+            // Update ancestor partial/full states upwards
+            updateAncestorStates(db, entry.getPath());
+
+            db.setTransactionSuccessful();
+        } catch (Exception e) {
+            DiagnosticReporter.logError(e, "setNodeAndSubtreeSelected failed");
+        } finally {
+            try { db.endTransaction(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void updateAncestorStates(SQLiteDatabase db, String path) {
+        if (path == null || path.isEmpty() || path.equals("/")) return;
+        // Re-evaluate parent based on children
+        String[] parts = path.split("/");
+        String currentPath = "";
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].isEmpty()) continue;
+            String parentPath = currentPath.isEmpty() ? "/" : currentPath;
+            currentPath = currentPath.equals("/") ? "/" + parts[i] : currentPath + "/" + parts[i];
+            String folderName = parts[i];
+
+            // Check children of currentPath
+            Cursor c = db.rawQuery("SELECT DISTINCT " + COL_SELECTED + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=?", new String[]{currentPath});
+            boolean hasSelected = false;
+            boolean hasUnselected = false;
+            boolean hasPartial = false;
+            int count = 0;
+            if (c != null) {
+                while (c.moveToNext()) {
+                    int st = c.getInt(0);
+                    if (st == 1) hasSelected = true;
+                    else if (st == 0) hasUnselected = true;
+                    else if (st == 2) hasPartial = true;
+                    count++;
+                }
+                c.close();
+            }
+
+            int newState = 0;
+            if (count > 0) {
+                if (hasPartial || (hasSelected && hasUnselected)) {
+                    newState = 2; // partial
+                } else if (hasSelected && !hasUnselected) {
+                    newState = 1;
+                } else {
+                    newState = 0;
+                }
+            }
+
+            db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new Object[]{newState, parentPath, folderName});
+        }
+    }
+
+    public synchronized void setAllSelected(boolean selected) {
+        SQLiteDatabase db = getWritableDatabase();
+        int st = selected ? 1 : 0;
+        try {
+            db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=?", new Object[]{st});
+        } catch (Exception e) {
+            DiagnosticReporter.logError(e, "setAllSelected failed");
+        }
+    }
+
+    public synchronized long[] getSelectedStats() {
+        SQLiteDatabase db = getReadableDatabase();
+        long filesCount = 0;
+        long totalBytes = 0;
+        Cursor c = db.rawQuery("SELECT SUM(" + COL_SIZE + "), COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1", null);
+        if (c != null) {
+            if (c.moveToFirst()) {
+                totalBytes = c.getLong(0);
+                filesCount = c.getLong(1);
+            }
+            c.close();
+        }
+        return new long[]{filesCount, totalBytes};
+    }
+
+    public synchronized List<RecoveredEntry> getAllSelectedFiles() {
+        List<RecoveredEntry> list = new ArrayList<>();
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + " FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1", null);
+        if (c != null) {
+            while (c.moveToNext()) {
+                String name = c.getString(1);
+                String path = c.getString(2);
+                long offset = c.getLong(3);
+                long size = c.getLong(4);
+                String typeStr = c.getString(5);
+                boolean isDir = c.getInt(6) == 1;
+                long modified = c.getLong(7);
+                int selectedState = c.getInt(8);
+                byte[] rawName = c.getBlob(9);
+
+                FileType type = FileType.UNKNOWN;
+                try {
+                    type = FileType.valueOf(typeStr);
+                } catch (Exception ignored) {}
+
+                RecoveredEntry entry = new RecoveredEntry(name, path, offset, size, type, false, isDir, modified, rawName);
+                entry.setSelectedState(selectedState);
+                list.add(entry);
+            }
+            c.close();
+        }
+        return list;
+    }
+
+    public synchronized List<RecoveredEntry> getAllEntriesForSaveAll() {
+        List<RecoveredEntry> list = new ArrayList<>();
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
+        if (c != null) {
+            while (c.moveToNext()) {
+                String name = c.getString(1);
+                String path = c.getString(2);
+                long offset = c.getLong(3);
+                long size = c.getLong(4);
+                String typeStr = c.getString(5);
+                boolean isDir = c.getInt(6) == 1;
+                long modified = c.getLong(7);
+                int selectedState = c.getInt(8);
+                byte[] rawName = c.getBlob(9);
+
+                FileType type = FileType.UNKNOWN;
+                try {
+                    type = FileType.valueOf(typeStr);
+                } catch (Exception ignored) {}
+
+                RecoveredEntry entry = new RecoveredEntry(name, path, offset, size, type, false, isDir, modified, rawName);
+                entry.setSelectedState(selectedState);
                 list.add(entry);
             }
             c.close();

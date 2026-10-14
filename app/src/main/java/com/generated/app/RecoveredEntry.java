@@ -1,8 +1,5 @@
 package com.generated.app;
 
-import java.util.ArrayList;
-import java.util.List;
-
 public class RecoveredEntry {
     private final String name;
     private final String path;
@@ -12,23 +9,23 @@ public class RecoveredEntry {
     private final boolean isDeleted;
     private final boolean isDirectory;
     private final long modifiedTime;
-    private final byte[] rawNameBytes;
+    private final byte[] rawNameBytes; // 32 bytes directory entry or raw blob
     
-    private boolean selected;
-    private final List<RecoveredEntry> children = new ArrayList<>();
-    private RecoveredEntry parent;
+    private int selectedState; // 0 = none, 1 = selected, 2 = partial
+    private long cachedRecursiveSize;
+    private int cachedRecursiveFileCount;
 
     public RecoveredEntry(String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes) {
-        this.name = name;
-        this.path = path;
+        this.name = name != null ? name : "unnamed";
+        this.path = path != null ? path : "/";
         this.offset = offset;
         this.length = length;
         this.type = type;
         this.isDeleted = isDeleted;
         this.isDirectory = isDirectory;
         this.modifiedTime = modifiedTime;
-        this.rawNameBytes = rawNameBytes;
-        this.selected = true;
+        this.rawNameBytes = rawNameBytes != null ? rawNameBytes : new byte[0];
+        this.selectedState = 0; // Rule 2: Nothing is selected by default
     }
 
     public String getName() {
@@ -67,69 +64,35 @@ public class RecoveredEntry {
         return rawNameBytes;
     }
 
+    public int getSelectedState() {
+        return selectedState;
+    }
+
+    public void setSelectedState(int selectedState) {
+        this.selectedState = selectedState;
+    }
+
     public boolean isSelected() {
-        return selected;
+        return selectedState == 1;
     }
 
-    public void setSelected(boolean selected) {
-        this.selected = selected;
-        for (RecoveredEntry child : children) {
-            child.setSelected(selected);
-        }
+    public boolean isPartial() {
+        return selectedState == 2;
     }
 
-    public List<RecoveredEntry> getChildren() {
-        return children;
+    public long getCachedRecursiveSize() {
+        return cachedRecursiveSize;
     }
 
-    public void addChild(RecoveredEntry child) {
-        child.parent = this;
-        children.add(child);
+    public void setCachedRecursiveSize(long size) {
+        this.cachedRecursiveSize = size;
     }
 
-    public RecoveredEntry getParent() {
-        return parent;
+    public int getCachedRecursiveFileCount() {
+        return cachedRecursiveFileCount;
     }
 
-    public long getRecursiveSize() {
-        if (!isDirectory) return length;
-        long sum = 0;
-        for (RecoveredEntry child : children) {
-            sum += child.getRecursiveSize();
-        }
-        return sum;
-    }
-
-    public int getRecursiveFileCount() {
-        if (!isDirectory) return 1;
-        int count = 0;
-        for (RecoveredEntry child : children) {
-            count += child.getRecursiveFileCount();
-        }
-        return count;
-    }
-
-    public void updateSelectionStateFromChildren() {
-        if (!isDirectory) return;
-        if (children.isEmpty()) return;
-        boolean allSelected = true;
-        boolean noneSelected = true;
-        for (RecoveredEntry child : children) {
-            if (child.isDirectory()) {
-                child.updateSelectionStateFromChildren();
-            }
-            if (child.isSelected()) {
-                noneSelected = false;
-            } else {
-                allSelected = false;
-            }
-        }
-        if (allSelected) {
-            this.selected = true;
-        } else if (noneSelected) {
-            this.selected = false;
-        } else {
-            this.selected = false; // partial
-        }
+    public void setCachedRecursiveFileCount(int count) {
+        this.cachedRecursiveFileCount = count;
     }
 }
