@@ -46,17 +46,16 @@ public class CodepageDecoder {
         rawNameStr = rawNameStr.trim();
         if (rawNameStr.isEmpty()) return "";
         
-        if (rawNameStr.length() <= 8) {
-            return rawNameStr;
-        }
-        
-        // If extension is embedded without dot, separate name and extension
-        String namePart = rawNameStr.substring(0, Math.min(8, rawNameStr.length())).trim();
+        // Item 2: Join short name as NAME + "." + EXT, omit dot only when extension is empty
+        String namePart = "";
         String extPart = "";
         if (rawNameStr.length() > 8) {
+            namePart = rawNameStr.substring(0, 8).trim();
             extPart = rawNameStr.substring(8).trim();
+        } else {
+            namePart = rawNameStr;
         }
-        
+
         if (extPart.isEmpty()) {
             return namePart;
         } else {

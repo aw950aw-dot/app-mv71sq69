@@ -286,7 +286,7 @@ public class FilesystemParser {
                         String shortNameRaw = CodepageDecoder.decode83(clusterData, i, 11);
                         String shortNameFormatted = CodepageDecoder.formatShortName(shortNameRaw);
                         
-                        // Item 2: Assemble FAT32 LFN with strict ordering and checksum validation
+                        // Item 2: Assemble LFN entries (0x0F, 13 UTF-16LE chars per entry from byte offsets 1-10, 14-25 and 28-31)
                         String resolvedName = assembleAndValidateFat32Lfn(lfnBuffer, shortNameFormatted, clusterData, i);
                         lfnBuffer.clear();
 
@@ -475,31 +475,47 @@ public class FilesystemParser {
         
         byte shortNameChecksum = computeShortNameChecksum(clusterData, shortNameOffset);
         boolean checksumValid = true;
-        for (Fat32LfnItem item : lfnList) {
+        int expectedSeq = 1;
+        boolean consecutive = true;
+
+        for (int i = 0; i < lfnList.size(); i++) {
+            Fat32LfnItem item = lfnList.get(i);
             byte lfnChk = item.data[13];
             if (lfnChk != shortNameChecksum) {
                 checksumValid = false;
-                break;
+            }
+            int seqRaw = item.data[0] & 0x1F;
+            if (seqRaw != lfnList.size() - i) {
+                consecutive = false;
             }
         }
 
+        // Item 2: Use the LFN as the file's name whenever LFN entries directly precede the short entry.
+        // If checksum does not match, still use the LFN when its sequence numbers are consecutive.
+        if (!checksumValid && !consecutive) {
+            return shortNameFormatted;
+        }
+
         StringBuilder sb = new StringBuilder();
-        // Item 2: LFN items are stored in reverse order in directory before short entry.
+        // Item 2: LFN entries stored before the short entry in reverse order. Stop at 0x0000 and skip 0xFFFF padding.
         for (int i = lfnList.size() - 1; i >= 0; i--) {
             byte[] buf = lfnList.get(i).data;
-            // Offsets: 1-10 (chars 1-5), 14-25 (chars 6-11), 28-31 (chars 12-13)
+            // 13 UTF-16LE chars per entry from byte offsets 1-10, 14-25 and 28-31
             int[] indices = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
             for (int idx : indices) {
                 if (idx + 2 > buf.length) break;
                 char c = (char) ByteBuffer.wrap(buf, idx, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
-                if (c == 0 || c == 0xFFFF) break;
+                if (c == 0x0000) {
+                    break;
+                }
+                if (c == 0xFFFF) {
+                    continue; // Skip 0xFFFF padding
+                }
                 sb.append(c);
             }
         }
         String lfn = sb.toString().trim();
         if (lfn.isEmpty()) return shortNameFormatted;
-        
-        // Item 2: Use LFN if consecutive even if checksum mismatches
         return lfn;
     }
 

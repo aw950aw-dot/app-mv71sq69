@@ -16,7 +16,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -33,8 +32,6 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import androidx.documentfile.provider.DocumentFile;
 
 import java.io.OutputStream;
 import java.nio.charset.Charset;
@@ -907,12 +904,11 @@ public class ScanActivity extends Activity {
             @Override
             public void run() {
                 try {
-                    DocumentFile rootDir = DocumentFile.fromTreeUri(ScanActivity.this, treeUri);
+                    DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(ScanActivity.this, treeUri);
                     if (rootDir == null || !rootDir.canWrite()) {
                         throw new Exception("Destination root directory is null or not writable.");
                     }
 
-                    // Find first available file from database to test
                     List<RecoveredEntry> allFiles = dbHelper.getAllEntriesForSaveAll();
                     RecoveredEntry testEntry = null;
                     for (RecoveredEntry e : allFiles) {
@@ -929,7 +925,7 @@ public class ScanActivity extends Activity {
                     String testFileName = "test_restore_" + sanitizeFileName(testEntry.getName());
                     String mimeType = getMimeTypeForFile(testFileName, testEntry.getType());
 
-                    DocumentFile testFile = rootDir.createFile(mimeType, testFileName);
+                    DocumentFileCompat testFile = rootDir.createFile(mimeType, testFileName);
                     if (testFile == null) {
                         throw new Exception("Failed to create test file in destination tree.");
                     }
@@ -938,7 +934,7 @@ public class ScanActivity extends Activity {
                         if (out == null) {
                             throw new Exception("Could not open OutputStream for test file URI.");
                         }
-                        long remaining = Math.min(testEntry.getLength(), 65536L); // test up to 64KB
+                        long remaining = Math.min(testEntry.getLength(), 65536L);
                         long offset = testEntry.getOffset();
                         byte[] buf = new byte[32768];
                         while (remaining > 0) {
@@ -993,7 +989,7 @@ public class ScanActivity extends Activity {
 
                 List<RecoveredEntry> entriesToRestore = saveAll ? dbHelper.getAllEntriesForSaveAll() : dbHelper.getAllSelectedFiles();
                 
-                DocumentFile rootDir = DocumentFile.fromTreeUri(ScanActivity.this, treeUri);
+                DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(ScanActivity.this, treeUri);
                 if (rootDir == null || !rootDir.canWrite()) {
                     errorLogs.add("תקיית היעד אינה נגישה או שאין הרשאת כתיבה.");
                     showRestoreSummaryAndDialog(0, entriesToRestore.size(), errorLogs);
@@ -1024,20 +1020,20 @@ public class ScanActivity extends Activity {
         restoreThread.start();
     }
 
-    private void saveNodeToDestinationUsingDocumentFile(ContentResolver resolver, DocumentFile rootDir, RecoveredEntry node, int[] successCount, List<String> errorLogs) {
+    private void saveNodeToDestinationUsingDocumentFile(ContentResolver resolver, DocumentFileCompat rootDir, RecoveredEntry node, int[] successCount, List<String> errorLogs) {
         try {
             String path = node.getPath();
-            DocumentFile currentParent = rootDir;
+            DocumentFileCompat currentParent = rootDir;
 
             if (path != null && !path.equals("/")) {
                 String[] segments = path.split("/");
                 for (String seg : segments) {
                     if (seg.isEmpty()) continue;
-                    DocumentFile foundSub = currentParent.findFile(seg);
+                    DocumentFileCompat foundSub = currentParent.findFile(seg);
                     if (foundSub != null && foundSub.isDirectory()) {
                         currentParent = foundSub;
                     } else {
-                        DocumentFile createdSub = currentParent.createDirectory(seg);
+                        DocumentFileCompat createdSub = currentParent.createDirectory(seg);
                         if (createdSub != null) {
                             currentParent = createdSub;
                         } else {
@@ -1048,7 +1044,7 @@ public class ScanActivity extends Activity {
             }
 
             if (node.isDirectory()) {
-                DocumentFile foundDir = currentParent.findFile(node.getName());
+                DocumentFileCompat foundDir = currentParent.findFile(node.getName());
                 if (foundDir == null) {
                     currentParent.createDirectory(node.getName());
                 }
@@ -1056,7 +1052,6 @@ public class ScanActivity extends Activity {
                 String sanitizedName = sanitizeFileName(node.getName());
                 String mimeType = getMimeTypeForFile(sanitizedName, node.getType());
 
-                // Ensure unique name in folder if duplicate exists
                 String uniqueName = sanitizedName;
                 int suffix = 1;
                 while (currentParent.findFile(uniqueName) != null) {
@@ -1069,7 +1064,7 @@ public class ScanActivity extends Activity {
                     suffix++;
                 }
 
-                DocumentFile targetFile = currentParent.createFile(mimeType, uniqueName);
+                DocumentFileCompat targetFile = currentParent.createFile(mimeType, uniqueName);
                 if (targetFile == null) {
                     throw new Exception("Failed to create document file: " + uniqueName);
                 }
@@ -1147,7 +1142,6 @@ public class ScanActivity extends Activity {
                 .setView(sv)
                 .setPositiveButton(android.R.string.ok, null);
 
-        // Item 3: "Retry failed files" button when failures exist
         if (failed > 0) {
             builder.setNegativeButton("נסה שנית קבצים שנכשלו", new android.content.DialogInterface.OnClickListener() {
                 @Override
@@ -1198,7 +1192,7 @@ public class ScanActivity extends Activity {
                                     false,
                                     false,
                                     System.currentTimeMillis(),
-                                    fileName
+                                    fileName.getBytes(StandardCharsets.UTF_8)
                             );
                             List<RecoveredEntry> single = new ArrayList<>();
                             single.add(entry);
