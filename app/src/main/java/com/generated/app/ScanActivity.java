@@ -69,33 +69,43 @@ public class ScanActivity extends Activity {
     private TreeEntryAdapter adapter;
 
     private boolean isPaused = false;
-    private String lastReportMethod = "מנתח מערכת קבצים...";
     private boolean isDeepScanning = false;
+
+    private int lastBroadcastFiles = 0;
+    private int lastBroadcastFolders = 0;
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (intent == null || intent.getAction() == null) return;
-            String action = intent.getAction();
+            try {
+                if (intent == null || intent.getAction() == null) return;
+                String action = intent.getAction();
 
-            if (ScanService.ACTION_PROGRESS.equals(action)) {
-                int count = intent.getIntExtra("count", 0);
-                String folder = intent.getStringExtra("folder");
-                if (folder != null) {
-                    tvStatus.setText("סורק תיקייה: " + folder + " • נמצאו: " + count);
-                } else {
-                    tvStatus.setText("סורק קבצים... • נמצאו: " + count);
+                if (ScanService.ACTION_PROGRESS.equals(action)) {
+                    int files = intent.getIntExtra("files_count", 0);
+                    int folders = intent.getIntExtra("folders_count", 0);
+                    String folder = intent.getStringExtra("folder");
+                    lastBroadcastFiles = files;
+                    lastBroadcastFolders = folders;
+
+                    if (folder != null) {
+                        tvStatus.setText("סורק תיקייה: " + folder + " • נמצאו: " + (files + folders));
+                    } else {
+                        tvStatus.setText("סורק קבצים... • נמצאו: " + (files + folders));
+                    }
+                    updateSummaryBoxWithCounts(files, folders);
+                    reloadCurrentDirectoryFromDb();
+                } else if (ScanService.ACTION_COMPLETED.equals(action)) {
+                    int count = intent.getIntExtra("count", 0);
+                    tvStatus.setText("הסריקה הסתיימה. נמצאו " + count + " פריטים.");
+                    btnCancel.setText(android.R.string.ok);
+                    btnPauseResume.setVisibility(View.GONE);
+                    tvMethodUsed.setText("שיטת שחזור: הושלם (" + FilesystemParser.getRecoveryMethodUsed() + ")");
+                    updateSummaryBox();
+                    reloadCurrentDirectoryFromDb();
                 }
-                updateSummaryBox();
-                reloadCurrentDirectoryFromDb();
-            } else if (ScanService.ACTION_COMPLETED.equals(action)) {
-                int count = intent.getIntExtra("count", 0);
-                tvStatus.setText("הסריקה הסתיימה. נמצאו " + count + " פריטים.");
-                btnCancel.setText(android.R.string.ok);
-                btnPauseResume.setVisibility(View.GONE);
-                tvMethodUsed.setText("שיטת שחזור: הושלם (" + FilesystemParser.getRecoveryMethodUsed() + ")");
-                updateSummaryBox();
-                reloadCurrentDirectoryFromDb();
+            } catch (Exception e) {
+                DiagnosticReporter.logError(e, "Exception in ScanActivity BroadcastReceiver onReceive");
             }
         }
     };
@@ -105,7 +115,7 @@ public class ScanActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
-        dbHelper = new DatabaseHelper(this);
+        dbHelper = DatabaseHelper.getInstance(this);
         sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
         usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
 
@@ -134,7 +144,16 @@ public class ScanActivity extends Activity {
         } catch (Exception ignored) {}
 
         setupUI();
-        startScanService();
+        
+        if (!ScanService.isScanRunning()) {
+            startScanService();
+        } else {
+            // Reopening activity while scan is running: restore counters from service
+            lastBroadcastFiles = ScanService.getFilesCount();
+            lastBroadcastFolders = ScanService.getFoldersCount();
+            tvStatus.setText("סורק... • נמצאו: " + (lastBroadcastFiles + lastBroadcastFolders));
+            updateSummaryBoxWithCounts(lastBroadcastFiles, lastBroadcastFolders);
+        }
     }
 
     private void setupUI() {
@@ -510,8 +529,10 @@ public class ScanActivity extends Activity {
     }
 
     private void updateSummaryBox() {
-        int files = dbHelper.getTotalFilesCount();
-        int folders = dbHelper.getTotalFoldersCount();
+        updateSummaryBoxWithCounts(lastBroadcastFiles, lastBroadcastFolders);
+    }
+
+    private void updateSummaryBoxWithCounts(int files, int folders) {
         StringBuilder sb = new StringBuilder();
         sb.append("סיכום סריקה:\n");
         sb.append("• מערכת קבצים: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n");
@@ -523,15 +544,21 @@ public class ScanActivity extends Activity {
     }
 
     private void reloadCurrentDirectoryFromDb() {
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
+        new Thread(new Runnable() {
             @Override
             public void run() {
-                currentDirEntries = dbHelper.getChildrenOfDirectory(currentDirPath);
-                updateBreadcrumb();
-                updateSummaryBox();
-                adapter.notifyDataSetChanged();
+                final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentDirPath);
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+                        currentDirEntries = list;
+                        updateBreadcrumb();
+                        updateSummaryBox();
+                        adapter.notifyDataSetChanged();
+                    }
+                });
             }
-        });
+        }).start();
     }
 
     private void updateBreadcrumb() {
@@ -568,7 +595,11 @@ public class ScanActivity extends Activity {
         } else {
             startService(intent);
         }
+    }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
         IntentFilter filter = new IntentFilter();
         filter.addAction(ScanService.ACTION_PROGRESS);
         filter.addAction(ScanService.ACTION_COMPLETED);
@@ -577,6 +608,15 @@ public class ScanActivity extends Activity {
         } else {
             registerReceiver(scanReceiver, filter);
         }
+        reloadCurrentDirectoryFromDb();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        try {
+            unregisterReceiver(scanReceiver);
+        } catch (Exception ignored) {}
     }
 
     private void showDiagnosticReportDialog() {
@@ -648,7 +688,6 @@ public class ScanActivity extends Activity {
                 final List<String> errorLogs = new ArrayList<>();
                 int[] successCount = new int[]{0};
 
-                // Stream entries from DB for saving
                 List<RecoveredEntry> allEntries = dbHelper.getChildrenOfDirectory("/");
                 for (RecoveredEntry entry : allEntries) {
                     saveNodeToTree(resolver, treeUri, entry, saveAll, successCount, errorLogs);
@@ -909,9 +948,6 @@ public class ScanActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        try {
-            unregisterReceiver(scanReceiver);
-        } catch (Exception ignored) {}
         if (byteSource != null) {
             byteSource.close();
         }

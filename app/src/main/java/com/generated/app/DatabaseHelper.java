@@ -12,7 +12,7 @@ import java.util.List;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 2;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -26,8 +26,24 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_TYPE = "type";
     public static final String COL_SELECTED = "selected";
 
-    public DatabaseHelper(Context context) {
+    private static DatabaseHelper instance;
+
+    public static synchronized DatabaseHelper getInstance(Context context) {
+        if (instance == null) {
+            instance = new DatabaseHelper(context.getApplicationContext());
+        }
+        return instance;
+    }
+
+    private DatabaseHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
+    }
+
+    @Override
+    public void onConfigure(SQLiteDatabase db) {
+        super.onConfigure(db);
+        db.setWriteAheadLoggingEnabled(true);
+        db.execSQL("PRAGMA busy_timeout = 15000;");
     }
 
     @Override
@@ -45,6 +61,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_SELECTED + " INTEGER DEFAULT 1)";
         db.execSQL(createTable);
         db.execSQL("CREATE INDEX idx_parent ON " + TABLE_NODES + "(" + COL_PARENT_ID + ")");
+        db.execSQL("CREATE INDEX idx_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
     }
 
     @Override
@@ -80,13 +97,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         } catch (Exception e) {
             DiagnosticReporter.logError(e, "Database batch insert failed");
         } finally {
-            db.endTransaction();
+            try {
+                db.endTransaction();
+            } catch (Exception ignored) {}
         }
     }
 
     private long getOrCreateParentId(SQLiteDatabase db, String path) {
         if (path == null || path.isEmpty() || path.equals("/")) {
-            // Check if root directory exists
             Cursor c = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new String[]{"/", ""});
             if (c.moveToFirst()) {
                 long id = c.getLong(0);
@@ -107,7 +125,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             return db.insert(TABLE_NODES, null, cv);
         }
 
-        // Ensure parent hierarchy
         String[] parts = path.split("/");
         long currentParentId = 0;
         String currentPathSoFar = "";
@@ -142,11 +159,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
-        // Normalize dirPath
         if (dirPath == null || dirPath.isEmpty()) dirPath = "/";
         if (!dirPath.startsWith("/")) dirPath = "/" + dirPath;
 
-        Cursor c = db.rawQuery("SELECT " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC", new String[]{dirPath});
+        Cursor c = db.rawQuery("SELECT " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 500", new String[]{dirPath});
         
         if (c != null) {
             while (c.moveToNext()) {

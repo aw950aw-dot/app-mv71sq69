@@ -82,9 +82,8 @@ public class FilesystemParser {
             try {
                 byte[] bootSector = new byte[512];
                 if (source.readAt(partOff, bootSector, 512) == 512) {
-                    // Try FAT32 primary
                     if (isValidFat32(bootSector)) {
-                        candidateEntries = parseFat32(source, partOff, bootSector, false, skippedLogBuilder, callback);
+                        candidateEntries = parseFat32(source, partOff, bootSector, skippedLogBuilder, callback);
                         if (!candidateEntries.isEmpty()) {
                             if (candidateEntries.size() > maxFilesFound) {
                                 maxFilesFound = candidateEntries.size();
@@ -96,23 +95,20 @@ public class FilesystemParser {
                     }
                 }
 
-                // Rule 4: Backup boot sector logic (e.g. partition starts at 2048, but valid FAT32 BPB is found at 2048+6 backup)
-                // Keep volume start strictly at partOff (e.g. 2048) and never 2054.
                 long backupFat32Off = partOff + 6 * 512;
                 if (backupFat32Off + 512 <= totalSize && source.readAt(backupFat32Off, bootSector, 512) == 512 && isValidFat32(bootSector)) {
-                    DiagnosticReporter.setBackupBootSectorUsed("זוהה מקטע איתחול מגובי ב-LBA " + (backupFat32Off / 512) + " (תוך שמירת תחילת נפח ב-LBA " + (partOff / 512) + ")");
-                    candidateEntries = parseFat32(source, partOff, bootSector, false, skippedLogBuilder, callback);
+                    DiagnosticReporter.setBackupBootSectorUsed("זוהה מקטע איתחול מגובי ב-LBA " + (backupFat32Off / 512));
+                    candidateEntries = parseFat32(source, partOff, bootSector, skippedLogBuilder, callback);
                     if (!candidateEntries.isEmpty()) {
                         if (candidateEntries.size() > maxFilesFound) {
                             maxFilesFound = candidateEntries.size();
                             bestEntries = candidateEntries;
-                            bestMethod = "מערכת קבצים FAT32 עם מקטע איתחול מגובי ב-Backup Sector (LBA " + (partOff / 512) + ")";
+                            bestMethod = "מערכת קבצים FAT32 עם מקטע איתחול מגובי (LBA " + (partOff / 512) + ")";
                         }
                         continue;
                     }
                 }
 
-                // Try exFAT
                 if (source.readAt(partOff, bootSector, 512) == 512 && isValidExFat(bootSector)) {
                     candidateEntries = parseExFat(source, partOff, bootSector, skippedLogBuilder, callback);
                     if (!candidateEntries.isEmpty()) {
@@ -208,8 +204,9 @@ public class FilesystemParser {
         }
     }
 
-    private static List<RecoveredEntry> parseFat32(ByteSource source, long partOffset, byte[] boot, boolean useSecondFatCopy, StringBuilder skippedLog, ParserCallback callback) throws IOException {
+    private static List<RecoveredEntry> parseFat32(ByteSource source, long partOffset, byte[] boot, StringBuilder skippedLog, ParserCallback callback) throws IOException {
         List<RecoveredEntry> entries = new ArrayList<>();
+        List<RecoveredEntry> batch = new ArrayList<>();
         try {
             ByteBuffer b = ByteBuffer.wrap(boot);
             b.order(ByteOrder.LITTLE_ENDIAN);
@@ -234,14 +231,18 @@ public class FilesystemParser {
             byte[] fatTable = new byte[fatBytesToRead];
             source.readAt(fatStartOffset, fatTable, fatBytesToRead);
 
-            traverseFat32DirectorySafe(source, clusterRegionStart, clusterSize, rootCluster, fatTable, "/", entries, new HashSet<Long>(), skippedLog, callback);
+            traverseFat32DirectorySafe(source, clusterRegionStart, clusterSize, rootCluster, fatTable, "/", entries, batch, new HashSet<Long>(), skippedLog, callback);
+            if (!batch.isEmpty() && callback != null) {
+                callback.onBatchReady(new ArrayList<>(batch));
+                batch.clear();
+            }
         } catch (Exception e) {
             DiagnosticReporter.logError(e, "FAT32 parsing exception");
         }
         return entries;
     }
 
-    private static void traverseFat32DirectorySafe(ByteSource source, long clusterRegionStart, long clusterSize, long startCluster, byte[] fatTable, String currentPath, List<RecoveredEntry> entries, Set<Long> visitedClusters, StringBuilder skippedLog, ParserCallback callback) {
+    private static void traverseFat32DirectorySafe(ByteSource source, long clusterRegionStart, long clusterSize, long startCluster, byte[] fatTable, String currentPath, List<RecoveredEntry> entries, List<RecoveredEntry> batch, Set<Long> visitedClusters, StringBuilder skippedLog, ParserCallback callback) {
         long currentCluster = startCluster;
         int maxClusters = 5000;
         List<Fat32LfnItem> lfnBuffer = new ArrayList<>();
@@ -307,11 +308,20 @@ public class FilesystemParser {
 
                         RecoveredEntry entry = new RecoveredEntry(resolvedName, currentPath, fileDataOffset, fileLength, type, false, isDir, modTime, rawNameBytes);
                         entries.add(entry);
+                        batch.add(entry);
+
+                        if (batch.size() >= 1000) {
+                            if (callback != null) {
+                                callback.onBatchReady(new ArrayList<>(batch));
+                            }
+                            batch.clear();
+                        }
+
                         DiagnosticReporter.addFirstFile(resolvedName, fileLength);
 
                         if (isDir && fileCluster >= 2 && fileCluster != startCluster) {
                             String subPath = currentPath.equals("/") ? "/" + resolvedName : currentPath + "/" + resolvedName;
-                            traverseFat32DirectorySafe(source, clusterRegionStart, clusterSize, fileCluster, fatTable, subPath, entries, new HashSet<>(visitedClusters), skippedLog, callback);
+                            traverseFat32DirectorySafe(source, clusterRegionStart, clusterSize, fileCluster, fatTable, subPath, entries, batch, new HashSet<>(visitedClusters), skippedLog, callback);
                         }
                     } catch (Exception entryEx) {
                         DiagnosticReporter.logError(entryEx, "Isolated failure processing directory entry in FAT32");
@@ -327,6 +337,7 @@ public class FilesystemParser {
 
     private static List<RecoveredEntry> parseExFat(ByteSource source, long partOffset, byte[] boot, StringBuilder skippedLog, ParserCallback callback) throws IOException {
         List<RecoveredEntry> entries = new ArrayList<>();
+        List<RecoveredEntry> batch = new ArrayList<>();
         try {
             ByteBuffer b = ByteBuffer.wrap(boot);
             b.order(ByteOrder.LITTLE_ENDIAN);
@@ -351,14 +362,18 @@ public class FilesystemParser {
             byte[] fatTable = new byte[fatBytesToRead];
             source.readAt(fatStartOffset, fatTable, fatBytesToRead);
 
-            traverseExFatDirectorySafe(source, clusterHeapStart, clusterSize, rootDirCluster, fatTable, clusterCount, "/", entries, new HashSet<Long>(), skippedLog, callback);
+            traverseExFatDirectorySafe(source, clusterHeapStart, clusterSize, rootDirCluster, fatTable, clusterCount, "/", entries, batch, new HashSet<Long>(), skippedLog, callback);
+            if (!batch.isEmpty() && callback != null) {
+                callback.onBatchReady(new ArrayList<>(batch));
+                batch.clear();
+            }
         } catch (Exception e) {
             DiagnosticReporter.logError(e, "exFAT parsing exception");
         }
         return entries;
     }
 
-    private static void traverseExFatDirectorySafe(ByteSource source, long clusterHeapStart, long clusterSize, long startCluster, byte[] fatTable, long clusterCount, String currentPath, List<RecoveredEntry> entries, Set<Long> visitedClusters, StringBuilder skippedLog, ParserCallback callback) {
+    private static void traverseExFatDirectorySafe(ByteSource source, long clusterHeapStart, long clusterSize, long startCluster, byte[] fatTable, long clusterCount, String currentPath, List<RecoveredEntry> entries, List<RecoveredEntry> batch, Set<Long> visitedClusters, StringBuilder skippedLog, ParserCallback callback) {
         long currentCluster = startCluster;
         int maxClusters = 5000;
 
@@ -416,11 +431,20 @@ public class FilesystemParser {
 
                         RecoveredEntry entry = new RecoveredEntry(name, currentPath, fileDataOffset, dataLength, type, false, isDir, System.currentTimeMillis(), rawNameBytes);
                         entries.add(entry);
+                        batch.add(entry);
+
+                        if (batch.size() >= 1000) {
+                            if (callback != null) {
+                                callback.onBatchReady(new ArrayList<>(batch));
+                            }
+                            batch.clear();
+                        }
+
                         DiagnosticReporter.addFirstFile(name, dataLength);
 
                         if (isDir && startingCluster >= 2) {
                             String subPath = currentPath.equals("/") ? "/" + name : currentPath + "/" + name;
-                            traverseExFatDirectorySafe(source, clusterHeapStart, clusterSize, startingCluster, fatTable, clusterCount, subPath, entries, new HashSet<>(visitedClusters), skippedLog, callback);
+                            traverseExFatDirectorySafe(source, clusterHeapStart, clusterSize, startingCluster, fatTable, clusterCount, subPath, entries, batch, new HashSet<>(visitedClusters), skippedLog, callback);
                         }
                     } catch (Exception ex) {
                         DiagnosticReporter.logError(ex, "Isolated exFAT entry error");
