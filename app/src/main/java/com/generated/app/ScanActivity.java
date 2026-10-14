@@ -81,6 +81,7 @@ public class ScanActivity extends Activity {
     private Button btnToggleDetails;
 
     private String currentDirPath = "/";
+    private long currentParentId = 0;
     private List<RecoveredEntry> currentDirEntries = new ArrayList<>();
     private List<RecoveredEntry> searchResults = new ArrayList<>();
     private boolean isSearching = false;
@@ -165,6 +166,7 @@ public class ScanActivity extends Activity {
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         dbHelper = DatabaseHelper.getInstance(this);
+        currentParentId = dbHelper.getRootId();
         sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
         usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
 
@@ -355,6 +357,7 @@ public class ScanActivity extends Activity {
                     }
                     isSearching = false;
                     etSearch.setText("");
+                    currentParentId = clicked.getId();
                     currentDirPath = currentDirPath.equals("/") ? "/" + clicked.getName() : currentDirPath + "/" + clicked.getName();
                     updateBreadcrumbBar();
                     reloadCurrentDirectoryFromDb();
@@ -676,6 +679,7 @@ public class ScanActivity extends Activity {
                 isSearching = false;
                 etSearch.setText("");
                 currentDirPath = "/";
+                currentParentId = dbHelper.getRootId();
                 updateBreadcrumbBar();
                 reloadCurrentDirectoryFromDb();
             }
@@ -690,6 +694,7 @@ public class ScanActivity extends Activity {
             if (part.isEmpty()) continue;
             pathSoFar += "/" + part;
             final String targetPath = pathSoFar;
+            final long targetId = dbHelper.getNodeId(targetPath.substring(0, targetPath.lastIndexOf('/') > 0 ? targetPath.lastIndexOf('/') : 0), part);
 
             TextView tvSep = new TextView(this);
             tvSep.setText(" > ");
@@ -709,6 +714,10 @@ public class ScanActivity extends Activity {
                     isSearching = false;
                     etSearch.setText("");
                     currentDirPath = targetPath;
+                    long foundId = dbHelper.getNodeId(targetPath.substring(0, targetPath.lastIndexOf('/')), part);
+                    if (foundId != -1) {
+                        currentParentId = foundId;
+                    }
                     updateBreadcrumbBar();
                     reloadCurrentDirectoryFromDb();
                 }
@@ -765,7 +774,7 @@ public class ScanActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentDirPath);
+                final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId);
                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
@@ -804,10 +813,23 @@ public class ScanActivity extends Activity {
         }
         if (!currentDirPath.equals("/")) {
             int lastSlash = currentDirPath.lastIndexOf('/');
+            String parentPath;
+            String folderName;
             if (lastSlash <= 0) {
+                parentPath = "/";
+                folderName = currentDirPath.substring(1);
                 currentDirPath = "/";
+                currentParentId = dbHelper.getRootId();
             } else {
-                currentDirPath = currentDirPath.substring(0, lastSlash);
+                parentPath = currentDirPath.substring(0, lastSlash);
+                folderName = currentDirPath.substring(lastSlash + 1);
+                currentDirPath = parentPath;
+                long pid = dbHelper.getParentId(parentPath, folderName);
+                if (pid != -1) {
+                    currentParentId = pid;
+                } else {
+                    currentParentId = dbHelper.getRootId();
+                }
             }
             updateBreadcrumbBar();
             reloadCurrentDirectoryFromDb();
@@ -1219,6 +1241,8 @@ public class ScanActivity extends Activity {
                 itemLayout.setBackgroundColor(0xFFFFFFFF);
 
                 CheckBox checkBox = new CheckBox(ScanActivity.this);
+                checkBox.setFocusable(false);
+                checkBox.setClickable(true);
                 itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1256,6 +1280,7 @@ public class ScanActivity extends Activity {
                 btnDetails.setText("פרטים");
                 btnDetails.setTextSize(11);
                 btnDetails.setTextColor(0xFF1976D2);
+                btnDetails.setFocusable(false);
                 itemLayout.addView(btnDetails, new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.WRAP_CONTENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1340,6 +1365,26 @@ public class ScanActivity extends Activity {
                 });
             }
 
+            itemLayout.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (entry.isDirectory()) {
+                        if (entry.isUnreadable()) {
+                            Toast.makeText(ScanActivity.this, "תיקייה זו מסומנת כלא קריאה ולא ניתן לפתוח אותה.", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        isSearching = false;
+                        etSearch.setText("");
+                        currentParentId = entry.getId();
+                        currentDirPath = currentDirPath.equals("/") ? "/" + entry.getName() : currentDirPath + "/" + entry.getName();
+                        updateBreadcrumbBar();
+                        reloadCurrentDirectoryFromDb();
+                    } else {
+                        showRawBytesHexDialog(entry);
+                    }
+                }
+            });
+
             itemLayout.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
@@ -1367,7 +1412,7 @@ public class ScanActivity extends Activity {
         sb.append("אופסט: 0x").append(Long.toHexString(entry.getOffset())).append("\n");
         sb.append("גודל: ").append(entry.getLength()).append(" בייטס\n");
         sb.append("סוג: ").append(FileType.safeName(entry.getType())).append("\n\n");
-        sb.append("רשומות ספריה גולמיות (כולל LFN במידת הצורך) בתצוגת Hex:\n");
+        sb.append("רשומות ספריה גולמיים (כולל LFN במידת הצורך) בתצוגת Hex:\n");
         
         byte[] bytes = entry.getRawNameBytes();
         if (bytes != null && bytes.length > 0) {

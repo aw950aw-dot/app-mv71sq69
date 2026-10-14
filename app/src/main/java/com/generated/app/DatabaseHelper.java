@@ -96,7 +96,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             for (RecoveredEntry entry : entries) {
                 ContentValues cv = new ContentValues();
-                cv.put(COL_PARENT_ID, getOrCreateParentId(db, entry.getPath()));
+                long parentId = getOrCreateParentId(db, entry.getPath());
+                cv.put(COL_PARENT_ID, parentId);
                 cv.put(COL_NAME, entry.getName());
                 cv.put(COL_PATH, entry.getPath());
                 cv.put(COL_IS_DIR, entry.isDirectory() ? 1 : 0);
@@ -173,14 +174,26 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return currentParentId;
     }
 
-    public synchronized List<RecoveredEntry> getChildrenOfDirectory(String dirPath) {
+    public synchronized long getRootId() {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new String[]{"/", ""});
+        if (c != null) {
+            if (c.moveToFirst()) {
+                long id = c.getLong(0);
+                c.close();
+                return id;
+            }
+            c.close();
+        }
+        // fallback
+        return 1L;
+    }
+
+    public synchronized List<RecoveredEntry> getChildrenOfDirectory(long parentId) {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
-        if (dirPath == null || dirPath.isEmpty()) dirPath = "/";
-        if (!dirPath.startsWith("/")) dirPath = "/" + dirPath;
-
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 500", new String[]{dirPath});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 500", new String[]{String.valueOf(parentId)});
         
         if (c != null) {
             while (c.moveToNext()) {
