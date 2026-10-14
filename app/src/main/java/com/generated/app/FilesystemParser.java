@@ -193,7 +193,7 @@ public class FilesystemParser {
             long off = lba * 512;
             if (off >= totalSize) continue;
 
-            sb.append("--- LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append;) ---\n");
+            sb.append("--- LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append(") ---\n");
             try {
                 byte[] buf = new byte[64];
                 int read = source.readAt(off, buf, 64);
