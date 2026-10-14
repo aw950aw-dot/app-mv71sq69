@@ -1,5 +1,6 @@
 package com.generated.app;
 
+import android.content.Context;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
@@ -23,9 +24,7 @@ public class DiagnosticReporter {
     private static int filesFoundCount = 0;
     private static int foldersFoundCount = 0;
     private static int errorCount = 0;
-    private static String skippedEntriesLog = "אין פריטים שדולגו";
     private static String lunUsed = "0";
-    private static String rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
 
     private static int longNameCount = 0;
     private static int shortNameCount = 0;
@@ -56,9 +55,7 @@ public class DiagnosticReporter {
         filesFoundCount = 0;
         foldersFoundCount = 0;
         errorCount = 0;
-        skippedEntriesLog = "אין פריטים שדולגו";
         lunUsed = "0";
-        rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
         longNameCount = 0;
         shortNameCount = 0;
         skippedGarbageCount = 0;
@@ -141,11 +138,8 @@ public class DiagnosticReporter {
         lunUsed = lun;
     }
 
-    public static synchronized void setRawSectorDumpText(String text) {
-        rawSectorDumpText = text;
-    }
-
-    public static synchronized String generateFullReport() {
+    public static synchronized String generateFullReport(Context context) {
+        DatabaseHelper db = context != null ? DatabaseHelper.getInstance(context) : null;
         StringBuilder sb = new StringBuilder();
         sb.append("=== דוח אבחון סריקה מקיף (SD Rescue) ===\n\n");
         sb.append("1. LUN בשימוש: ").append(lunUsed).append("\n");
@@ -164,6 +158,15 @@ public class DiagnosticReporter {
         sb.append("14. תיקיות לא קריאות: ").append(unreadableFoldersCount).append("\n");
         sb.append("15. סך שגיאות שבודדו והופקו: ").append(errorCount).append("\n\n");
         
+        if (db != null) {
+            long rootId = db.getRootId();
+            int rootChildrenCount = db.getChildrenCountForNode(rootId);
+            sb.append("--- סטטיסטיקת שורש (Root DB Stats) ---\n");
+            sb.append("• Root Node ID: ").append(rootId).append("\n");
+            sb.append("• Root Parent ID: 0\n");
+            sb.append("• Root Children Count: ").append(rootChildrenCount).append("\n\n");
+        }
+
         sb.append("16. 30 שמות קבצים ותיקיות ראשונים שנמצאו עם גודלם:\n");
         if (firstFilesList.isEmpty()) {
             sb.append("(טרם נוספו קבצים לרשימה)\n");

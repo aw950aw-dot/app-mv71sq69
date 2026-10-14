@@ -361,6 +361,8 @@ public class ScanActivity extends Activity {
                     currentDirPath = currentDirPath.equals("/") ? "/" + clicked.getName() : currentDirPath + "/" + clicked.getName();
                     updateBreadcrumbBar();
                     reloadCurrentDirectoryFromDb();
+                } else if (clicked != null && !clicked.isDirectory()) {
+                    showRawBytesHexDialog(clicked);
                 }
             }
         });
@@ -542,7 +544,7 @@ public class ScanActivity extends Activity {
             @Override
             public void onClick(View v) {
                 try {
-                    final String reportText = DiagnosticReporter.generateFullReport();
+                    final String reportText = DiagnosticReporter.generateFullReport(ScanActivity.this);
                     ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                     ClipData clip = ClipData.newPlainText("Scan Report", reportText);
                     if (clipboard != null) {
@@ -947,7 +949,7 @@ public class ScanActivity extends Activity {
     private void writeReportToFile(Uri uri) {
         try (OutputStream out = getContentResolver().openOutputStream(uri)) {
             if (out != null) {
-                String report = DiagnosticReporter.generateFullReport();
+                String report = DiagnosticReporter.generateFullReport(this);
                 out.write(report.getBytes(StandardCharsets.UTF_8));
                 Toast.makeText(this, "הדוח נשמר בהצלחה כקובץ טקסט", Toast.LENGTH_SHORT).show();
             }
@@ -1190,7 +1192,7 @@ public class ScanActivity extends Activity {
     }
 
     private void showDiagnosticReportDialog() {
-        String report = DiagnosticReporter.generateFullReport();
+        String report = DiagnosticReporter.generateFullReport(this);
 
         TextView tv = new TextView(this);
         tv.setText(report);
@@ -1365,6 +1367,12 @@ public class ScanActivity extends Activity {
                 });
             }
 
+            itemLevelClickSetup(itemLayout, entry, holder);
+
+            return itemLayout;
+        }
+
+        private void itemLevelClickSetup(View itemLayout, final RecoveredEntry entry, ViewHolder holder) {
             itemLayout.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -1392,8 +1400,6 @@ public class ScanActivity extends Activity {
                     return true;
                 }
             });
-
-            return itemLayout;
         }
 
         class ViewHolder {
@@ -1406,7 +1412,24 @@ public class ScanActivity extends Activity {
     }
 
     private void showRawBytesHexDialog(RecoveredEntry entry) {
+        long parentId = dbHelper.getParentId(entry.getPath(), entry.getName());
+        int childrenCount = dbHelper.getChildrenCountForNode(entry.getId());
+        long firstCluster = 0;
+        try {
+            byte[] raw = entry.getRawNameBytes();
+            if (raw != null && raw.length >= 32) {
+                firstCluster = ((long) (raw[20] & 0xFF | (raw[21] & 0xFF) << 8) << 16) | (raw[26] & 0xFF | (raw[27] & 0xFF) << 8);
+            }
+        } catch (Exception ignored) {}
+
         StringBuilder sb = new StringBuilder();
+        sb.append("=== אבחון פרטי צומת (Node Diagnostics) ===\n");
+        sb.append("• Node ID: ").append(entry.getId()).append("\n");
+        sb.append("• Parent ID: ").append(parentId).append("\n");
+        sb.append("• First Cluster: ").append(firstCluster).append("\n");
+        sb.append("• is_dir: ").append(entry.isDirectory() ? 1 : 0).append("\n");
+        sb.append("• Children count in DB: ").append(childrenCount).append("\n\n");
+
         sb.append("שם הקובץ: ").append(entry.getName()).append("\n");
         sb.append("נתיב: ").append(entry.getPath()).append("\n");
         sb.append("אופסט: 0x").append(Long.toHexString(entry.getOffset())).append("\n");

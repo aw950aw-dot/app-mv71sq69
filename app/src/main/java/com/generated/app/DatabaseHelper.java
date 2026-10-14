@@ -13,7 +13,7 @@ import java.util.List;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 4;
+    private static final int DATABASE_VERSION = 5;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -185,7 +185,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
-        // fallback
         return 1L;
     }
 
@@ -220,7 +219,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
                 if (isDir) {
                     String subPath = path.equals("/") ? "/" + name : path + "/" + name;
-                    long[] stats = getRecursiveStats(db, subPath);
+                    long[] stats = getRecursiveStatsRecursiveSql(db, subPath);
                     entry.setCachedRecursiveSize(stats[0]);
                     entry.setCachedRecursiveFileCount((int) stats[1]);
                 }
@@ -232,21 +231,58 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return list;
     }
 
-    private long[] getRecursiveStats(SQLiteDatabase db, String dirPath) {
+    private long[] getRecursiveStatsRecursiveSql(SQLiteDatabase db, String dirPath) {
         long totalSize = 0;
         int fileCount = 0;
-        Cursor c = db.rawQuery("SELECT " + COL_SIZE + ", " + COL_IS_DIR + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + " LIKE ?", new String[]{dirPath + "%"});
-        if (c != null) {
-            while (c.moveToNext()) {
-                boolean isDir = c.getInt(1) == 1;
-                if (!isDir) {
-                    totalSize += c.getLong(0);
-                    fileCount++;
+        String query = "WITH RECURSIVE sub(id, size, is_dir, path, name) AS (" +
+                "  SELECT id, size, is_dir, path, name FROM " + TABLE_NODES + " WHERE path = ? OR (path = '/' AND name = ?)" +
+                "  UNION ALL" +
+                "  SELECT n.id, n.size, n.is_dir, n.path, n.name FROM " + TABLE_NODES + " n JOIN sub s ON n.parent_id = s.id" +
+                ") SELECT SUM(size), COUNT(*) FROM sub WHERE is_dir = 0";
+        
+        String directName = dirPath.contains("/") ? dirPath.substring(dirPath.lastIndexOf('/') + 1) : dirPath;
+        String parentPath = dirPath.contains("/") ? dirPath.substring(0, dirPath.lastIndexOf('/')) : "/";
+        if (parentPath.isEmpty()) parentPath = "/";
+
+        Cursor c = null;
+        try {
+            c = db.rawQuery(query, new String[]{dirPath, directName});
+            if (c != null && c.moveToFirst()) {
+                totalSize = c.getLong(0);
+                fileCount = c.getInt(1);
+            }
+        } catch (Exception ignored) {
+            // Fallback if WITH RECURSIVE fails or table structure differs
+            try {
+                if (c != null) c.close();
+                Cursor fallback = db.rawQuery("SELECT " + COL_SIZE + ", " + COL_IS_DIR + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + " LIKE ?", new String[]{dirPath + "%"});
+                if (fallback != null) {
+                    while (fallback.moveToNext()) {
+                        if (fallback.getInt(1) == 0) {
+                            totalSize += fallback.getLong(0);
+                            fileCount++;
+                        }
+                    }
+                    fallback.close();
                 }
+            } catch (Exception ignored2) {}
+        } finally {
+            if (c != null) c.close();
+        }
+        return new long[]{totalSize, fileCount};
+    }
+
+    public synchronized int getChildrenCountForNode(long nodeId) {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=?", new String[]{String.valueOf(nodeId)});
+        int count = 0;
+        if (c != null) {
+            if (c.moveToFirst()) {
+                count = c.getInt(0);
             }
             c.close();
         }
-        return new long[]{totalSize, fileCount};
+        return count;
     }
 
     public synchronized List<RecoveredEntry> searchNodes(String query) {
