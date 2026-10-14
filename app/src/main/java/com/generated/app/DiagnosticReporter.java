@@ -161,7 +161,7 @@ public class DiagnosticReporter {
         } else {
             int idx = 1;
             for (FileInfoRecord rec : firstFilesList) {
-                sb.append("  ").append(idx++)..append(". ").append(rec.name).append(" (").append(rec.size).append(" bytes)\n");
+                sb.append("  ").append(idx++).append(". ").append(rec.name).append(" (").append(rec.size).append(" bytes)\n");
             }
         }
         sb.append("\n");
