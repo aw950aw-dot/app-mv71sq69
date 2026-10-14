@@ -6,7 +6,10 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -17,6 +20,7 @@ import android.os.PowerManager;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
@@ -24,6 +28,8 @@ public class RestoreService extends Service {
 
     public static final String EXTRA_TREE_URI = "extra_tree_uri";
     public static final String EXTRA_SAVE_ALL = "extra_save_all";
+    public static final String EXTRA_URI = "extra_uri";
+    public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
 
     public static final String ACTION_PROGRESS = "com.generated.app.RESTORE_PROGRESS";
     public static final String ACTION_COMPLETED = "com.generated.app.RESTORE_COMPLETED";
@@ -94,6 +100,8 @@ public class RestoreService extends Service {
 
             Uri treeUri = intent.getParcelableExtra(EXTRA_TREE_URI);
             boolean saveAll = intent.getBooleanExtra(EXTRA_SAVE_ALL, true);
+            Uri sourceUri = intent.getParcelableExtra(EXTRA_URI);
+            String usbDeviceName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
 
             if (treeUri != null && !isRestoreRunning) {
                 isRestoreRunning = true;
@@ -103,6 +111,43 @@ public class RestoreService extends Service {
                 currentPercent = 0;
 
                 startForeground(NOTIFICATION_ID, createNotification("מתחיל שחזור קבצים...", 0, "מעבד נתונים..."));
+
+                // Initialize source matching the scan source
+                try {
+                    if (sourceUri != null) {
+                        byteSource = new FileImageSource(getContentResolver(), sourceUri);
+                        DiagnosticReporter.log("RestoreService: Using FileImageSource for URI: " + sourceUri);
+                    } else if (usbDeviceName != null) {
+                        UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+                        HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+                        UsbDevice target = null;
+                        for (UsbDevice d : deviceList.values()) {
+                            if (d.getDeviceName().equals(usbDeviceName)) {
+                                target = d;
+                                break;
+                            }
+                        }
+                        if (target != null) {
+                            if (!usbManager.hasPermission(target)) {
+                                DiagnosticReporter.log("RestoreService: FATAL - USB device lacks permission.");
+                                throw new Exception("USB device permission denied");
+                            }
+                            byteSource = new UsbMassStorageSource(this, target);
+                            DiagnosticReporter.log("RestoreService: Using UsbMassStorageSource for device: " + usbDeviceName);
+                        } else {
+                            throw new Exception("USB device not found: " + usbDeviceName);
+                        }
+                    } else {
+                        throw new Exception("No scan source provided to RestoreService.");
+                    }
+                } catch (Exception e) {
+                    DiagnosticReporter.logError(e, "RestoreService failed to open source");
+                    List<String> errs = new ArrayList<>();
+                    errs.add("שגיאה בפתיחת מקור הקריאה לשחזור: " + e.getMessage());
+                    finishRestore(0, 1, errs);
+                    return START_NOT_STICKY;
+                }
+
                 startRestoreThread(treeUri, saveAll);
             }
         }
@@ -182,7 +227,6 @@ public class RestoreService extends Service {
 
                 long startTime = System.currentTimeMillis();
                 long lastNotificationUpdate = 0;
-                // Sliding window of speed measurements over last 30 seconds
                 final int windowSize = 30;
                 long[] timeHistory = new long[windowSize];
                 long[] byteHistory = new long[windowSize];
@@ -209,8 +253,9 @@ public class RestoreService extends Service {
                         }
                     } catch (Exception e) {
                         failedFilesCount++;
-                        errorLogs.add("נכשל " + entry.getName() + ": " + e.getMessage());
-                        DiagnosticReporter.logError(e, "Restore file error");
+                        String errInfo = "נכשל " + entry.getName() + " (Offset: 0x" + Long.toHexString(entry.getOffset()) + "): " + e.getMessage();
+                        errorLogs.add(errInfo);
+                        DiagnosticReporter.logError(e, "Restore file failed completely");
                     }
 
                     if (totalBytesCount > 0) {
@@ -228,7 +273,6 @@ public class RestoreService extends Service {
                         lastHistoryTime = now;
                     }
 
-                    // Compute average speed over last 30 seconds
                     long oldestTime = timeHistory[historyIndex];
                     long bytesInWindow = 0;
                     for (long b : byteHistory) bytesInWindow += b;
@@ -245,7 +289,6 @@ public class RestoreService extends Service {
                     currentEtaText = String.format(Locale.getDefault(), "קבצים %d מתוך %d · %.2f GB מתוך %.2f GB · נשארו כ-%d דקות",
                             (restoredFilesCount + failedFilesCount), totalFilesCount, gbRestored, gbTotal, remainingMin);
 
-                    // Update notification at most twice per second (every 500ms)
                     if (now - lastNotificationUpdate >= 500) {
                         lastNotificationUpdate = now;
                         updateNotification(currentFileName, currentPercent, currentEtaText);
@@ -308,7 +351,7 @@ public class RestoreService extends Service {
             }
 
             if (byteSource == null) {
-                byteSource = new FileImageSource(resolver, Uri.parse("")); // fallback handled safely
+                throw new Exception("ByteSource is null during restore.");
             }
 
             try (OutputStream out = resolver.openOutputStream(targetFile.getUri())) {
@@ -318,10 +361,13 @@ public class RestoreService extends Service {
                 long remaining = node.getLength();
                 long offset = node.getOffset();
                 byte[] buf = new byte[262144]; // 256 KB chunks
+
                 while (remaining > 0 && !isCancelled) {
                     int toRead = (int) Math.min(buf.length, remaining);
                     int read = byteSource.readAt(offset, buf, toRead);
-                    if (read <= 0) break;
+                    if (read <= 0) {
+                        throw new Exception("Read failed or reached EOF prematurely at offset 0x" + Long.toHexString(offset));
+                    }
                     out.write(buf, 0, read);
                     offset += read;
                     remaining -= read;
@@ -365,7 +411,6 @@ public class RestoreService extends Service {
     private void finishRestore(int success, int failed, List<String> errors) {
         isRestoreRunning = false;
 
-        // Replace ongoing notification with final completed notification
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.cancel(NOTIFICATION_ID);

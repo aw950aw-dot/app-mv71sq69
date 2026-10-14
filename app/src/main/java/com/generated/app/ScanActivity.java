@@ -95,8 +95,6 @@ public class ScanActivity extends Activity {
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private Runnable searchRunnable;
 
-    private List<String> lastFailedErrors = new ArrayList<>();
-
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -943,6 +941,12 @@ public class ScanActivity extends Activity {
         Intent intent = new Intent(this, RestoreService.class);
         intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
         intent.putExtra(RestoreService.EXTRA_SAVE_ALL, saveAll);
+        if (sourceUri != null) {
+            intent.putExtra(RestoreService.EXTRA_URI, sourceUri);
+        }
+        if (usbDeviceName != null) {
+            intent.putExtra(RestoreService.EXTRA_USB_DEVICE_NAME, usbDeviceName);
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             startForegroundService(intent);
         } else {
@@ -1046,6 +1050,13 @@ public class ScanActivity extends Activity {
         sb.append("סיכום תהליך שחזור:\n\n");
         sb.append("• שחזור בהצלחה: ").append(success).append(" קבצים\n");
         sb.append("• נכשלו בשחזור: ").append(failed).append(" פריטים\n\n");
+
+        if (lastFailedErrors != null && !lastFailedErrors.isEmpty()) {
+            sb.append("פירוט שגיאות נבחרות:\n");
+            for (String err : lastFailedErrors) {
+                sb.append("• ").append(err).append("\n");
+            }
+        }
 
         TextView tv = new TextView(this);
         tv.setText(sb.toString());
