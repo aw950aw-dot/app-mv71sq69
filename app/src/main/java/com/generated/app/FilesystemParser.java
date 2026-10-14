@@ -32,10 +32,8 @@ public class FilesystemParser {
 
         DiagnosticReporter.log("Starting strict filesystem parsing. Total media size: " + totalSize);
 
-        // 1. Generate Raw Sector Dump for LBA 0 (512 bytes) + standard sectors
+        // 1 & 2. Generate Raw Sector Dump for LBA 0 (512 bytes) and scan first 256MB for boot signatures (64 bytes of each sector where EXFAT, FAT32 or NTFS found)
         generateAndStoreRawSectorDumps(source, totalSize);
-
-        // 2. Scan first 256MB for boot sector signatures ("EXFAT   ", "FAT32   ", "NTFS    ")
         scanBootSignaturesInFirst256MB(source, totalSize);
 
         byte[] sector0 = new byte[512];
@@ -161,7 +159,7 @@ public class FilesystemParser {
     private static void generateAndStoreRawSectorDumps(ByteSource source, long totalSize) {
         StringBuilder sb = new StringBuilder();
         
-        // Dump LBA 0 (Full 512 bytes)
+        // Item 2: Full raw hex of LBA 0 (512 bytes)
         sb.append("=== LBA 0 (Full 512 Bytes Raw Hex) ===\n");
         try {
             byte[] lba0Buf = new byte[512];
@@ -171,7 +169,7 @@ public class FilesystemParser {
                     sb.append(String.format("0x%04X: ", i));
                     for (int j = 0; j < 16; j++) {
                         if (i + j < read) {
-                            sb.append(String.format("%02X ", lba0Buf[i + j]));
+                            sb.append(String.format("%02X ", lba0Buf[i + j] & 0xFF));
                         } else {
                             sb.append("   ");
                         }
@@ -186,39 +184,11 @@ public class FilesystemParser {
             sb.append("(שגיאה בקריאת LBA 0: ").append(e.getMessage()).append(")\n");
         }
         sb.append("\n");
-
-        // Additional standard LBA dumps
-        long[] dumpLbas = {1, 6, 2048, 8192, 32768, 65536, 1048576};
-        for (long lba : dumpLbas) {
-            long off = lba * 512;
-            if (off >= totalSize) continue;
-
-            sb.append("--- LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append(") ---\n");
-            try {
-                byte[] buf = new byte[64];
-                int read = source.readAt(off, buf, 64);
-                if (read > 0) {
-                    for (int i = 0; i < read; i += 16) {
-                        sb.append(String.format("0x%04X: ", i));
-                        for (int j = 0; j < 16; j++) {
-                            if (i + j < read) {
-                                sb.append(String.format("%02X ", buf[i + j]));
-                            } else {
-                                sb.append("   ");
-                            }
-                        }
-                        sb.append("\n");
-                    }
-                }
-            } catch (Exception e) {
-                sb.append("(שגיאה בקריאת סקטור: ").append(e.getMessage()).append(")\n");
-            }
-            sb.append("\n");
-        }
         DiagnosticReporter.setRawSectorDumpText(sb.toString());
     }
 
     private static void scanBootSignaturesInFirst256MB(ByteSource source, long totalSize) {
+        // Item 2: Scan first 256MB for "EXFAT   ", "FAT32   ", "NTFS    " and record the first 64 bytes of every such sector
         long maxScanLimit = Math.min(totalSize, 256L * 1024L * 1024L);
         byte[] sectorBuf = new byte[512];
         long sectorSize = 512;
@@ -244,7 +214,7 @@ public class FilesystemParser {
                     if (found) {
                         long lba = off / 512;
                         StringBuilder sb = new StringBuilder();
-                        sb.append("שעון חתימה [").append(sigName).append("] נמצא ב-LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append("):\nקידומת 64 בתים ראשונים:\n");
+                        sb.append("חתימה [").append(sigName).append("] נמצאה ב-LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append("):\nראשון 64 בתים:\n");
                         for (int i = 0; i < 64; i += 16) {
                             sb.append(String.format("0x%04X: ", i));
                             for (int j = 0; j < 16; j++) {

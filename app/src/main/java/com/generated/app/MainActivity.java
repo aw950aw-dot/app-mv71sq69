@@ -41,7 +41,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // 3) Global crash handler setup
+        // Item 3: Global crash handler setup (Thread.setDefaultUncaughtExceptionHandler)
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread t, Throwable e) {
@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Check if previous crash exists
+        // Item 3: Check if previous crash exists and show in a copyable dialog on next launch
         checkAndShowCrashDialog();
 
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
@@ -174,7 +174,7 @@ public class MainActivity extends Activity {
 
         TextView tvVersion = new TextView(this);
         String buildDateTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date());
-        tvVersion.setText("v0.2 build " + buildDateTime);
+        tvVersion.setText("v0.3 build " + buildDateTime);
         tvVersion.setTextSize(11);
         tvVersion.setTextColor(0xFF888888);
         FrameLayout.LayoutParams versionParams = new FrameLayout.LayoutParams(
@@ -250,7 +250,7 @@ public class MainActivity extends Activity {
                 tv.setText(sb.toString());
                 tv.setTextSize(12);
                 tv.setTextColor(0xFF333333);
-                tv.setTextIsSelectable(true);
+                tv.setTextIsSelectable(true); // Item 3: Copyable dialog
                 int pad = (int) (12 * getResources().getDisplayMetrics().density);
                 tv.setPadding(pad, pad, pad, pad);
 
@@ -258,7 +258,7 @@ public class MainActivity extends Activity {
                 sv.addView(tv);
 
                 new AlertDialog.Builder(this)
-                        .setTitle("דווח על קריסת אפליקציה קודמת (Crash Log)")
+                        .setTitle("דוח קריסה מקודם (Crash Log)")
                         .setView(sv)
                         .setPositiveButton(android.R.string.ok, null)
                         .show();

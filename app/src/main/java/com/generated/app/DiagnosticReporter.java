@@ -132,6 +132,7 @@ public class DiagnosticReporter {
         }
 
         String result = sb.toString();
+        // Item 1: text limited strictly to 100 KB
         if (result.length() > 100 * 1024) {
             result = result.substring(0, 100 * 1024) + "\n\n[הדוח קוצר עקב חריגה מגבול 100KB]";
         }

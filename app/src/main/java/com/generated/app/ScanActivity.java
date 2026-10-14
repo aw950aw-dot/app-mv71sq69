@@ -216,7 +216,7 @@ public class ScanActivity extends Activity {
         topCard.addView(tvSummaryBox, summaryParams);
         updateSummaryBox();
 
-        // 1) Buttons row for Copy and Save report + Deep Scan button
+        // Item 1: Buttons row for Copy report, Save report, and Deep Scan button
         LinearLayout reportButtonsLayout = new LinearLayout(this);
         reportButtonsLayout.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams rbParams = new LinearLayout.LayoutParams(
@@ -251,7 +251,7 @@ public class ScanActivity extends Activity {
         btnDeepScanNow.setBackgroundColor(0xFF6A1B9A);
         reportButtonsLayout.addView(btnDeepScanNow, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-        // 1) Safe Copy Report Implementation with try/catch and MainLooper
+        // Item 1: Safe Copy Report implementation with try/catch, MainLooper, and max 100 KB limit enforced in DiagnosticReporter
         btnCopyReport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -278,7 +278,7 @@ public class ScanActivity extends Activity {
             }
         });
 
-        // 1) Save report via ACTION_CREATE_DOCUMENT
+        // Item 1: Save report via ACTION_CREATE_DOCUMENT
         btnSaveReport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -294,7 +294,7 @@ public class ScanActivity extends Activity {
             }
         });
 
-        // 4) Independent "סריקה עמוקה" (Deep Scan) button implementation
+        // Item 4: Independent "סריקה עמוקה" (Deep Scan) button implementation
         btnDeepScanNow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -494,6 +494,7 @@ public class ScanActivity extends Activity {
                             if (!exists) {
                                 String typeFolderName = carvedFile.getType().getName();
                                 String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
+                                // Item 4: shows results under a "Carved files" group
                                 final RecoveredEntry entry = new RecoveredEntry(
                                         fileName,
                                         "/Carved files/" + typeFolderName,
@@ -688,7 +689,7 @@ public class ScanActivity extends Activity {
             if (out != null) {
                 String report = DiagnosticReporter.generateFullReport();
                 out.write(report.getBytes(Charset.forName("UTF-8")));
-                Toast.makeText(this, "הדוח נשמר בהצלחה קובץ טקסט", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "הדוח נשמר בהצלחה כקובץ טקסט", Toast.LENGTH_SHORT).show();
             }
         } catch (Exception e) {
             Toast.makeText(this, "שגיאה בשמירת הדוח לקובץ", Toast.LENGTH_SHORT).show();
