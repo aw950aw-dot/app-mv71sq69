@@ -964,7 +964,6 @@ public class ScanActivity extends Activity {
                     prefs.edit().putString(PREF_DEST_URI, treeUri.toString()).apply();
                 } catch (Exception ignored) {}
 
-                // Compute details for confirmation dialog
                 new Thread(new Runnable() {
                     @Override
                     public void run() {
