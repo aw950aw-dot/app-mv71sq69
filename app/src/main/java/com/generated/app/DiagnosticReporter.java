@@ -3,11 +3,15 @@ package com.generated.app;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class DiagnosticReporter {
     private static final List<String> logs = new ArrayList<>();
     private static final List<String> errorStackTraces = new ArrayList<>();
+    private static final Map<String, Integer> errorCountsMap = new HashMap<>();
+    private static final Map<String, List<String>> errorExamplesMap = new HashMap<>();
     private static final List<FileInfoRecord> firstFilesList = new ArrayList<>();
 
     private static String partitionInfo = "טרם אותרה";
@@ -24,8 +28,6 @@ public class DiagnosticReporter {
     private static String skippedEntriesLog = "אין פריטים שדולגו";
     private static String lunUsed = "0";
     private static String rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
-    private static final List<String> rawDirEntriesDump = new ArrayList<>();
-    private static final List<String> signatureSectorsDump = new ArrayList<>();
 
     public static class FileInfoRecord {
         public final String name;
@@ -39,6 +41,8 @@ public class DiagnosticReporter {
     public static synchronized void clear() {
         logs.clear();
         errorStackTraces.clear();
+        errorCountsMap.clear();
+        errorExamplesMap.clear();
         firstFilesList.clear();
         partitionInfo = "טרם אותרה";
         chosenStartLba = "0";
@@ -54,8 +58,6 @@ public class DiagnosticReporter {
         skippedEntriesLog = "אין פריטים שדולגו";
         lunUsed = "0";
         rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
-        rawDirEntriesDump.clear();
-        signatureSectorsDump.clear();
     }
 
     public static synchronized void log(String msg) {
@@ -64,12 +66,26 @@ public class DiagnosticReporter {
 
     public static synchronized void logError(Throwable t, String contextMsg) {
         errorCount++;
-        logs.add("[" + System.currentTimeMillis() + "] ERROR: " + contextMsg + " - " + (t != null ? t.getMessage() : "unknown"));
-        if (errorStackTraces.size() < 20 && t != null) {
+        String errorKey = t != null && t.getMessage() != null ? t.getMessage() : (t != null ? t.getClass().getSimpleName() : "unknown error");
+        if (contextMsg != null && !contextMsg.isEmpty()) {
+            errorKey = contextMsg + ": " + errorKey;
+        }
+
+        int currentCount = errorCountsMap.containsKey(errorKey) ? errorCountsMap.get(errorKey) : 0;
+        errorCountsMap.put(errorKey, currentCount + 1);
+
+        List<String> examples = errorExamplesMap.get(errorKey);
+        if (examples == null) {
+            examples = new ArrayList<>();
+            errorExamplesMap.put(errorKey, examples);
+        }
+        if (examples.size() < 20 && t != null) {
             StringWriter sw = new StringWriter();
             t.printStackTrace(new PrintWriter(sw));
-            errorStackTraces.add(sw.toString());
+            examples.add(sw.toString());
         }
+
+        logs.add("[" + System.currentTimeMillis() + "] ERROR: " + errorKey);
     }
 
     public static synchronized void addFirstFile(String name, long size) {
@@ -131,14 +147,6 @@ public class DiagnosticReporter {
         rawSectorDumpText = text;
     }
 
-    public static synchronized void addRawDirEntryDump(String dump) {
-        rawDirEntriesDump.add(dump);
-    }
-
-    public static synchronized void addSignatureSectorDump(String dump) {
-        signatureSectorsDump.add(dump);
-    }
-
     public static synchronized String generateFullReport() {
         StringBuilder sb = new StringBuilder();
         sb.append("=== דוח אבחון סריקה מקיף (SD Rescue) ===\n\n");
@@ -166,12 +174,24 @@ public class DiagnosticReporter {
         }
         sb.append("\n");
 
-        sb.append("14. 20 סטאק-טרייסים ראשונים של שגיאות שבודדו:\n");
-        if (errorStackTraces.isEmpty()) {
+        sb.append("14. שגיאות מקובצות לפי סיבה ומופעים:\n");
+        if (errorCountsMap.isEmpty()) {
             sb.append("(אין שגיאות לתצוגה)\n");
         } else {
-            for (int i = 0; i < errorStackTraces.size(); i++) {
-                sb.append("--- שגיאה ").append(i + 1).append(" ---\n").append(errorStackTraces.get(i)).append("\n");
+            int errIdx = 1;
+            for (Map.Entry<String, Integer> entry : errorCountsMap.entrySet()) {
+                String cause = entry.getKey();
+                int count = entry.getValue();
+                sb.append("--- שגיאה ").append(errIdx++).append(" (סך הכל מופעים: ").append(count).append(") ---\n");
+                sb.append("סיבה: ").append(cause).append("\n");
+                List<String> examples = errorExamplesMap.get(cause);
+                if (examples != null && !examples.isEmpty()) {
+                    sb.append("דוגמאות ראשונות (עד 20):\n");
+                    for (int ex = 0; ex < examples.size(); ex++) {
+                        sb.append("  [דוגמה ").append(ex + 1).append("]:\n").append(examples.get(ex)).append("\n");
+                    }
+                }
+                sb.append("\n");
             }
         }
         sb.append("\n");

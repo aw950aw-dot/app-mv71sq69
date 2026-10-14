@@ -5,7 +5,6 @@ import java.nio.charset.StandardCharsets;
 
 public class CodepageDecoder {
 
-    // Rule 5: Default codepage CP862 (Hebrew DOS)
     private static String currentCodepage = "CP862";
 
     public static void setCodepage(String cp) {
@@ -29,22 +28,39 @@ public class CodepageDecoder {
                 charset = Charset.forName("Cp437");
             }
 
-            // Handle 0x05 as 0xE5 (first character Japanese/Kanji fix in FAT)
             byte[] workBuf = new byte[length];
             System.arraycopy(buffer, offset, workBuf, 0, length);
             if (workBuf[0] == 0x05) {
                 workBuf[0] = (byte) 0xE5;
             }
 
-            // Rule 5: Handle lowercase flags in byte 12 (offset 12 relative to entry start)
-            // If buffer has length >= 13, byte at entryOffset + 12 contains NT file name case flags.
-            // But here buffer is passed as directory entry segment or name slice.
             String decoded = new String(workBuf, charset).trim();
-            
-            // Remove trailing spaces in 8.3 name parts
             return decoded;
         } catch (Exception e) {
             return new String(buffer, offset, length, StandardCharsets.ISO_8859_1).trim();
+        }
+    }
+
+    public static String formatShortName(String rawNameStr) {
+        if (rawNameStr == null) return "";
+        rawNameStr = rawNameStr.trim();
+        if (rawNameStr.isEmpty()) return "";
+        
+        if (rawNameStr.length() <= 8) {
+            return rawNameStr;
+        }
+        
+        // If extension is embedded without dot, separate name and extension
+        String namePart = rawNameStr.substring(0, Math.min(8, rawNameStr.length())).trim();
+        String extPart = "";
+        if (rawNameStr.length() > 8) {
+            extPart = rawNameStr.substring(8).trim();
+        }
+        
+        if (extPart.isEmpty()) {
+            return namePart;
+        } else {
+            return namePart + "." + extPart;
         }
     }
 }

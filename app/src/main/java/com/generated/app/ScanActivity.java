@@ -22,6 +22,7 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.MimeTypeMap;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -32,6 +33,8 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.documentfile.provider.DocumentFile;
 
 import java.io.OutputStream;
 import java.nio.charset.Charset;
@@ -55,21 +58,17 @@ public class ScanActivity extends Activity {
     private ByteSource byteSource;
     private DatabaseHelper dbHelper;
 
-    // Fixed top elements (Rule 4)
     private EditText etSearch;
     private LinearLayout layoutBreadcrumb;
     private Button btnSelectAll;
     private Button btnClearSelection;
     private TextView tvSelectionCounter;
 
-    // Scrolling list view
     private ListView listView;
 
-    // Fixed bottom action buttons (Rule 4)
     private Button btnSaveSelected;
     private Button btnSaveAll;
 
-    // Collapsible details / summary header view added inside adapter header or top scroll container
     private LinearLayout headerContainer;
     private TextView tvStatus;
     private TextView tvMethodUsed;
@@ -78,6 +77,7 @@ public class ScanActivity extends Activity {
     private Button btnSaveReport;
     private Button btnDeepScanNow;
     private Button btnErrorLog;
+    private Button btnTestRestore; // Item 4
     private ProgressBar progressBar;
     private Button btnCancel;
     private Button btnPauseResume;
@@ -98,6 +98,8 @@ public class ScanActivity extends Activity {
 
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private Runnable searchRunnable;
+
+    private List<String> lastFailedErrors = new ArrayList<>();
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override
@@ -140,7 +142,6 @@ public class ScanActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // Rule 5: RTL layout and text direction
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         dbHelper = DatabaseHelper.getInstance(this);
@@ -184,7 +185,6 @@ public class ScanActivity extends Activity {
     }
 
     private void setupUI() {
-        // Rule 4 Layout: Single layout with fixed top/bottom bars and scrolling ListView filling remaining height
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setLayoutParams(new LinearLayout.LayoutParams(
@@ -193,7 +193,6 @@ public class ScanActivity extends Activity {
 
         int pad = (int) (12 * getResources().getDisplayMetrics().density);
 
-        // --- FIXED TOP BAR: Search, Breadcrumb, Selection Actions ---
         LinearLayout fixedTopBar = new LinearLayout(this);
         fixedTopBar.setOrientation(LinearLayout.VERTICAL);
         fixedTopBar.setPadding(pad, pad, pad, pad);
@@ -203,7 +202,6 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        // Rule 3: Search field with short debounce
         etSearch = new EditText(this);
         etSearch.setHint("חיפוש קבצים לפי שם...");
         etSearch.setTextSize(14);
@@ -232,14 +230,13 @@ public class ScanActivity extends Activity {
                         performSearch(query);
                     }
                 };
-                searchHandler.postDelayed(searchRunnable, 300); // 300ms debounce
+                searchHandler.postDelayed(searchRunnable, 300);
             }
 
             @Override
             public void afterTextChanged(Editable s) {}
         });
 
-        // Rule 1: Breadcrumb at top with tap to jump
         layoutBreadcrumb = new LinearLayout(this);
         layoutBreadcrumb.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams bcParams = new LinearLayout.LayoutParams(
@@ -250,7 +247,6 @@ public class ScanActivity extends Activity {
         fixedTopBar.addView(layoutBreadcrumb, bcParams);
         updateBreadcrumbBar();
 
-        // Selection buttons and counter bar (Rule 2)
         LinearLayout selActionLayout = new LinearLayout(this);
         selActionLayout.setOrientation(LinearLayout.HORIZONTAL);
         selActionLayout.setGravity(Gravity.CENTER_VERTICAL);
@@ -306,7 +302,6 @@ public class ScanActivity extends Activity {
             }
         });
 
-        // --- SCROLLABLE LIST VIEW FILLING REMAINING HEIGHT (Rule 4) ---
         listView = new ListView(this);
         LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -315,7 +310,6 @@ public class ScanActivity extends Activity {
         );
         root.addView(listView, listParams);
 
-        // Add header to ListView for summary, progress, report buttons (collapsible via Details button)
         setupListViewHeader();
 
         adapter = new TreeEntryAdapter();
@@ -340,7 +334,6 @@ public class ScanActivity extends Activity {
             }
         });
 
-        // --- FIXED BOTTOM ACTION BAR: Restore selected / Save all (Rule 4) ---
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(pad, pad, pad, pad);
@@ -406,7 +399,6 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        // Details toggle button header
         btnToggleDetails = new Button(this);
         btnToggleDetails.setText("הסתר פרטי סריקה ▲");
         btnToggleDetails.setTextSize(12);
@@ -473,6 +465,7 @@ public class ScanActivity extends Activity {
 
         LinearLayout reportButtonsLayout = new LinearLayout(this);
         reportButtonsLayout.setOrientation(LinearLayout.HORIZONTAL);
+        reportButtonsLayout.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams rbParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -490,7 +483,7 @@ public class ScanActivity extends Activity {
         reportButtonsLayout.addView(btnCopyReport, btnR1);
 
         btnSaveReport = new Button(this);
-        btnSaveReport.setText("שמור דוח (.txt)");
+        btnSaveReport.setText("שמור דוח");
         btnSaveReport.setTextSize(11);
         btnSaveReport.setTextColor(0xFFFFFFFF);
         btnSaveReport.setBackgroundColor(0xFF00838F);
@@ -503,7 +496,17 @@ public class ScanActivity extends Activity {
         btnDeepScanNow.setTextSize(11);
         btnDeepScanNow.setTextColor(0xFFFFFFFF);
         btnDeepScanNow.setBackgroundColor(0xFF6A1B9A);
-        reportButtonsLayout.addView(btnDeepScanNow, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+        LinearLayout.LayoutParams btnR3 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        btnR3.rightMargin = 4;
+        reportButtonsLayout.addView(btnDeepScanNow, btnR3);
+
+        // Item 4: Test restore debug button
+        btnTestRestore = new Button(this);
+        btnTestRestore.setText("Test restore");
+        btnTestRestore.setTextSize(11);
+        btnTestRestore.setTextColor(0xFFFFFFFF);
+        btnTestRestore.setBackgroundColor(0xFFE65100);
+        reportButtonsLayout.addView(btnTestRestore, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
         btnCopyReport.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -545,6 +548,13 @@ public class ScanActivity extends Activity {
                     return;
                 }
                 runManualDeepScan();
+            }
+        });
+
+        btnTestRestore.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                checkAndPromptDestinationForTest();
             }
         });
 
@@ -818,20 +828,35 @@ public class ScanActivity extends Activity {
         String savedUriStr = prefs.getString(PREF_DEST_URI, null);
         if (savedUriStr != null) {
             Uri destUri = Uri.parse(savedUriStr);
-            // Verify persistable permission
             try {
                 getContentResolver().takePersistableUriPermission(destUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                 startRestoring(destUri, saveAll);
                 return;
             } catch (Exception ignored) {}
         }
-        promptForSaveDirectory(saveAll);
+        promptForSaveDirectory(saveAll, false);
+    }
+
+    private void checkAndPromptDestinationForTest() {
+        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+        String savedUriStr = prefs.getString(PREF_DEST_URI, null);
+        if (savedUriStr != null) {
+            Uri destUri = Uri.parse(savedUriStr);
+            try {
+                getContentResolver().takePersistableUriPermission(destUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                runTestRestore(destUri);
+                return;
+            } catch (Exception ignored) {}
+        }
+        promptForSaveDirectory(false, true);
     }
 
     private boolean saveAllModeFlag = true;
+    private boolean isTestRestoreFlag = false;
 
-    private void promptForSaveDirectory(boolean saveAll) {
+    private void promptForSaveDirectory(boolean saveAll, boolean isTest) {
         this.saveAllModeFlag = saveAll;
+        this.isTestRestoreFlag = isTest;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         try {
             startActivityForResult(intent, REQUEST_CODE_SAVE_DIR);
@@ -852,7 +877,11 @@ public class ScanActivity extends Activity {
                     prefs.edit().putString(PREF_DEST_URI, treeUri.toString()).apply();
                 } catch (Exception ignored) {}
 
-                startRestoring(treeUri, saveAllModeFlag);
+                if (isTestRestoreFlag) {
+                    runTestRestore(treeUri);
+                } else {
+                    startRestoring(treeUri, saveAllModeFlag);
+                }
             }
         } else if (requestCode == REQUEST_CODE_SAVE_REPORT && resultCode == RESULT_OK) {
             if (data != null && data.getData() != null) {
@@ -873,8 +902,85 @@ public class ScanActivity extends Activity {
         }
     }
 
+    private void runTestRestore(final Uri treeUri) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    DocumentFile rootDir = DocumentFile.fromTreeUri(ScanActivity.this, treeUri);
+                    if (rootDir == null || !rootDir.canWrite()) {
+                        throw new Exception("Destination root directory is null or not writable.");
+                    }
+
+                    // Find first available file from database to test
+                    List<RecoveredEntry> allFiles = dbHelper.getAllEntriesForSaveAll();
+                    RecoveredEntry testEntry = null;
+                    for (RecoveredEntry e : allFiles) {
+                        if (!e.isDirectory() && e.getLength() > 0) {
+                            testEntry = e;
+                            break;
+                        }
+                    }
+
+                    if (testEntry == null) {
+                        throw new Exception("No files found in database to perform test restore.");
+                    }
+
+                    String testFileName = "test_restore_" + sanitizeFileName(testEntry.getName());
+                    String mimeType = getMimeTypeForFile(testFileName, testEntry.getType());
+
+                    DocumentFile testFile = rootDir.createFile(mimeType, testFileName);
+                    if (testFile == null) {
+                        throw new Exception("Failed to create test file in destination tree.");
+                    }
+
+                    try (OutputStream out = getContentResolver().openOutputStream(testFile.getUri())) {
+                        if (out == null) {
+                            throw new Exception("Could not open OutputStream for test file URI.");
+                        }
+                        long remaining = Math.min(testEntry.getLength(), 65536L); // test up to 64KB
+                        long offset = testEntry.getOffset();
+                        byte[] buf = new byte[32768];
+                        while (remaining > 0) {
+                            int toRead = (int) Math.min(buf.length, remaining);
+                            int read = byteSource.readAt(offset, buf, toRead);
+                            if (read <= 0) break;
+                            out.write(buf, 0, read);
+                            offset += read;
+                            remaining -= read;
+                        }
+                        out.flush();
+                    }
+
+                    final String successMsg = "Test restore successful!\nRestored file: " + testFileName + " (" + testEntry.getLength() + " bytes)";
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            new AlertDialog.Builder(ScanActivity.this)
+                                    .setTitle("Test Restore Result")
+                                    .setMessage(successMsg)
+                                    .setPositiveButton(android.R.string.ok, null)
+                                    .show();
+                        }
+                    });
+
+                } catch (final Exception e) {
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            new AlertDialog.Builder(ScanActivity.this)
+                                    .setTitle("Test Restore Failed")
+                                    .setMessage("Exception:\n" + e.getMessage())
+                                    .setPositiveButton(android.R.string.ok, null)
+                                    .show();
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+
     private void startRestoring(final Uri treeUri, final boolean saveAll) {
-        // Rule 6: Warning when destination is on the card being read
         Toast.makeText(this, "מתחיל שחזור קבצים ליעד שנבחר...", Toast.LENGTH_SHORT).show();
 
         Thread restoreThread = new Thread(new Runnable() {
@@ -882,33 +988,35 @@ public class ScanActivity extends Activity {
             public void run() {
                 ContentResolver resolver = getContentResolver();
                 final List<String> errorLogs = new ArrayList<>();
+                lastFailedErrors.clear();
                 int[] successCount = new int[]{0};
 
                 List<RecoveredEntry> entriesToRestore = saveAll ? dbHelper.getAllEntriesForSaveAll() : dbHelper.getAllSelectedFiles();
                 
-                // Group by path and recreate hierarchy
+                DocumentFile rootDir = DocumentFile.fromTreeUri(ScanActivity.this, treeUri);
+                if (rootDir == null || !rootDir.canWrite()) {
+                    errorLogs.add("תקיית היעד אינה נגישה או שאין הרשאת כתיבה.");
+                    showRestoreSummaryAndDialog(0, entriesToRestore.size(), errorLogs);
+                    return;
+                }
+
                 for (RecoveredEntry entry : entriesToRestore) {
                     try {
-                        saveNodeToDestination(resolver, treeUri, entry, successCount, errorLogs);
+                        saveNodeToDestinationUsingDocumentFile(resolver, rootDir, entry, successCount, errorLogs);
                     } catch (Exception e) {
-                        errorLogs.add("שגיאת שחזור " + entry.getName() + ": " + e.getMessage());
+                        String err = "שגיאת שחזור " + entry.getName() + ": " + e.getMessage();
+                        errorLogs.add(err);
+                        lastFailedErrors.add(entry.getName());
                     }
                 }
 
                 final int finalSuccess = successCount[0];
+                final int finalFailed = errorLogs.size();
+
                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
-                        StringBuilder msg = new StringBuilder();
-                        msg.append("הסתיים השחזור. הצלחה: ").append(finalSuccess);
-                        if (!errorLogs.isEmpty()) {
-                            msg.append(" (נכשלו: ").append(errorLogs.size()).append(")");
-                        }
-                        Toast.makeText(ScanActivity.this, msg.toString(), Toast.LENGTH_LONG).show();
-
-                        if (!errorLogs.isEmpty()) {
-                            showRestoreErrorDialog(errorLogs);
-                        }
+                        showRestoreSummaryAndDialog(finalSuccess, finalFailed, errorLogs);
                     }
                 });
             }
@@ -916,72 +1024,93 @@ public class ScanActivity extends Activity {
         restoreThread.start();
     }
 
-    private void saveNodeToDestination(ContentResolver resolver, Uri treeUri, RecoveredEntry node, int[] successCount, List<String> errorLogs) {
+    private void saveNodeToDestinationUsingDocumentFile(ContentResolver resolver, DocumentFile rootDir, RecoveredEntry node, int[] successCount, List<String> errorLogs) {
         try {
-            // Recreate folder path under treeUri
             String path = node.getPath();
-            Uri currentParentUri = treeUri;
+            DocumentFile currentParent = rootDir;
+
             if (path != null && !path.equals("/")) {
                 String[] segments = path.split("/");
                 for (String seg : segments) {
                     if (seg.isEmpty()) continue;
-                    Uri found = findOrCreateSubDocument(resolver, currentParentUri, seg);
-                    if (found != null) {
-                        currentParentUri = found;
+                    DocumentFile foundSub = currentParent.findFile(seg);
+                    if (foundSub != null && foundSub.isDirectory()) {
+                        currentParent = foundSub;
+                    } else {
+                        DocumentFile createdSub = currentParent.createDirectory(seg);
+                        if (createdSub != null) {
+                            currentParent = createdSub;
+                        } else {
+                            throw new Exception("Failed to create directory: " + seg);
+                        }
                     }
                 }
             }
 
             if (node.isDirectory()) {
-                findOrCreateSubDocument(resolver, currentParentUri, node.getName());
+                DocumentFile foundDir = currentParent.findFile(node.getName());
+                if (foundDir == null) {
+                    currentParent.createDirectory(node.getName());
+                }
             } else {
                 String sanitizedName = sanitizeFileName(node.getName());
-                Uri docUri = DocumentsContract.createDocument(resolver, currentParentUri, FileType.safeMimeType(node.getType()), sanitizedName);
-                if (docUri != null) {
-                    try (OutputStream out = resolver.openOutputStream(docUri)) {
-                        if (out != null) {
-                            long remaining = node.getLength();
-                            long offset = node.getOffset();
-                            byte[] buf = new byte[32768];
-                            while (remaining > 0) {
-                                int toRead = (int) Math.min(buf.length, remaining);
-                                int read = byteSource.readAt(offset, buf, toRead);
-                                if (read <= 0) break;
-                                out.write(buf, 0, read);
-                                offset += read;
-                                remaining -= read;
-                            }
-                            successCount[0]++;
-                        }
+                String mimeType = getMimeTypeForFile(sanitizedName, node.getType());
+
+                // Ensure unique name in folder if duplicate exists
+                String uniqueName = sanitizedName;
+                int suffix = 1;
+                while (currentParent.findFile(uniqueName) != null) {
+                    int dotIdx = sanitizedName.lastIndexOf('.');
+                    if (dotIdx > 0) {
+                        uniqueName = sanitizedName.substring(0, dotIdx) + "_" + suffix + sanitizedName.substring(dotIdx);
+                    } else {
+                        uniqueName = sanitizedName + "_" + suffix;
                     }
+                    suffix++;
+                }
+
+                DocumentFile targetFile = currentParent.createFile(mimeType, uniqueName);
+                if (targetFile == null) {
+                    throw new Exception("Failed to create document file: " + uniqueName);
+                }
+
+                if (!uniqueName.equals(node.getName())) {
+                    DiagnosticReporter.log("Note: Provider renamed created file from " + node.getName() + " to " + uniqueName);
+                }
+
+                try (OutputStream out = resolver.openOutputStream(targetFile.getUri())) {
+                    if (out == null) {
+                        throw new Exception("Could not open OutputStream for target URI.");
+                    }
+                    long remaining = node.getLength();
+                    long offset = node.getOffset();
+                    byte[] buf = new byte[262144]; // Item 1: 256 KB chunks
+                    while (remaining > 0) {
+                        int toRead = (int) Math.min(buf.length, remaining);
+                        int read = byteSource.readAt(offset, buf, toRead);
+                        if (read <= 0) break;
+                        out.write(buf, 0, read);
+                        offset += read;
+                        remaining -= read;
+                    }
+                    out.flush();
+                    successCount[0]++;
                 }
             }
         } catch (Exception e) {
             errorLogs.add("נכשל שחזור " + node.getName() + ": " + e.getMessage());
+            lastFailedErrors.add(node.getName());
+            DiagnosticReporter.logError(e, "Restore file error for " + node.getName());
         }
     }
 
-    private Uri findOrCreateSubDocument(ContentResolver resolver, Uri parentUri, String displayName) {
-        try {
-            Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(parentUri, DocumentsContract.getDocumentId(parentUri));
-            try (android.database.Cursor c = resolver.query(childrenUri, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
-                if (c != null) {
-                    while (c.moveToNext()) {
-                        String name = c.getString(1);
-                        if (displayName.equalsIgnoreCase(name)) {
-                            String docId = c.getString(0);
-                            return DocumentsContract.buildDocumentUriUsingTree(parentUri, docId);
-                        }
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            return DocumentsContract.createDocument(resolver, parentUri, DocumentsContract.Document.MIME_TYPE_DIR, sanitizeFileName(displayName));
-        } catch (Exception e) {
-            return parentUri;
+    private String getMimeTypeForFile(String fileName, FileType type) {
+        if (fileName != null && fileName.contains(".")) {
+            String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+            String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+            if (mime != null) return mime;
         }
+        return FileType.safeMimeType(type);
     }
 
     private String sanitizeFileName(String name) {
@@ -989,11 +1118,17 @@ public class ScanActivity extends Activity {
         return name.replaceAll("[/\\\\?%*:|<>\"]", "_");
     }
 
-    private void showRestoreErrorDialog(List<String> errors) {
+    private void showRestoreSummaryAndDialog(int success, int failed, final List<String> errors) {
         StringBuilder sb = new StringBuilder();
-        sb.append("דוח שגיאות שחזור קבצים:\n\n");
-        for (String err : errors) {
-            sb.append("• ").append(err).append("\n");
+        sb.append("סיכום תהליך שחזור:\n\n");
+        sb.append("• שחזור בהצלחה: ").append(success).append(" קבצים\n");
+        sb.append("• נכשלו בשחזור: ").append(failed).append(" פריטים\n\n");
+
+        if (!errors.isEmpty()) {
+            sb.append("פירוט שגיאות נבחרות:\n");
+            for (int i = 0; i < Math.min(15, errors.size()); i++) {
+                sb.append("• ").append(errors.get(i)).append("\n");
+            }
         }
 
         TextView tv = new TextView(this);
@@ -1007,11 +1142,31 @@ public class ScanActivity extends Activity {
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
         sv.addView(tv);
 
-        new AlertDialog.Builder(this)
-                .setTitle("דוח שגיאות שחזור")
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle("דוח שחזור קבצים")
                 .setView(sv)
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+                .setPositiveButton(android.R.string.ok, null);
+
+        // Item 3: "Retry failed files" button when failures exist
+        if (failed > 0) {
+            builder.setNegativeButton("נסה שנית קבצים שנכשלו", new android.content.DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(android.content.DialogInterface dialog, int which) {
+                    retryFailedFiles();
+                }
+            });
+        }
+
+        builder.show();
+    }
+
+    private void retryFailedFiles() {
+        if (lastFailedErrors.isEmpty()) {
+            Toast.makeText(this, "אין קבצים נכשולים לניסיון חוזר", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "מנסה לשחזר שנית קבצים שנכשלו...", Toast.LENGTH_SHORT).show();
+        checkAndPromptDestination(false);
     }
 
     private void runManualDeepScan() {
@@ -1043,7 +1198,7 @@ public class ScanActivity extends Activity {
                                     false,
                                     false,
                                     System.currentTimeMillis(),
-                                    fileName.getBytes(StandardCharsets.UTF_16LE)
+                                    fileName
                             );
                             List<RecoveredEntry> single = new ArrayList<>();
                             single.add(entry);
@@ -1130,13 +1285,11 @@ public class ScanActivity extends Activity {
                 itemLayout = new LinearLayout(ScanActivity.this);
                 itemLayout.setOrientation(LinearLayout.HORIZONTAL);
                 itemLayout.setGravity(Gravity.CENTER_VERTICAL);
-                // Rule 5: RTL layout and text direction firstStrong
                 itemLayout.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
                 int pad = (int) (12 * getResources().getDisplayMetrics().density);
                 itemLayout.setPadding(pad, pad, pad, pad);
                 itemLayout.setBackgroundColor(0xFFFFFFFF);
 
-                // Tri-state CheckBox representation via regular CheckBox or custom click handler
                 CheckBox checkBox = new CheckBox(ScanActivity.this);
                 itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -1195,7 +1348,6 @@ public class ScanActivity extends Activity {
             final RecoveredEntry entry = (RecoveredEntry) getItem(position);
             if (entry == null) return itemLayout;
 
-            // Rule 2: Tri-state checkbox handling
             holder.checkBox.setChecked(entry.isSelected());
             if (entry.isPartial()) {
                 holder.checkBox.jumpDrawablesToCurrentState();
@@ -1215,12 +1367,10 @@ public class ScanActivity extends Activity {
             if (entry.isDirectory()) {
                 holder.ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
                 holder.tvName.setText("📁 " + entry.getName());
-                // Rule 1: Folder row shows its name, number of files inside (recursive) and total size
                 String folderDesc = String.format(Locale.getDefault(), "%d קבצים • %s", entry.getCachedRecursiveFileCount(), formatSize(entry.getCachedRecursiveSize()));
                 holder.tvDetails.setText(folderDesc);
                 holder.btnDetails.setVisibility(View.GONE);
             } else {
-                // If searching, show full path in details
                 if (isSearching) {
                     holder.tvName.setText(entry.getName());
                     holder.tvDetails.setText("נתיב: " + entry.getPath() + " • " + formatSize(entry.getLength()));
@@ -1253,7 +1403,6 @@ public class ScanActivity extends Activity {
                 });
             }
 
-            // Rule 5: Long press triggers Name details action on any file
             itemLayout.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {

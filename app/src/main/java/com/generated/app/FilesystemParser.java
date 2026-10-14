@@ -283,10 +283,11 @@ public class FilesystemParser {
                         }
 
                         boolean isDir = (attr & 0x10) != 0;
-                        String shortName = CodepageDecoder.decode83(clusterData, i, 11);
+                        String shortNameRaw = CodepageDecoder.decode83(clusterData, i, 11);
+                        String shortNameFormatted = CodepageDecoder.formatShortName(shortNameRaw);
                         
-                        // Rule 5: Assemble FAT32 LFN with strict ordering and checksum validation
-                        String resolvedName = assembleAndValidateFat32Lfn(lfnBuffer, shortName, clusterData, i);
+                        // Item 2: Assemble FAT32 LFN with strict ordering and checksum validation
+                        String resolvedName = assembleAndValidateFat32Lfn(lfnBuffer, shortNameFormatted, clusterData, i);
                         lfnBuffer.clear();
 
                         if (resolvedName.equals(".") || resolvedName.equals("..") || resolvedName.isEmpty()) {
@@ -302,7 +303,6 @@ public class FilesystemParser {
                         int dateField = ByteBuffer.wrap(clusterData, i + 24, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
                         long modTime = decodeDosDateTime(dateField, timeField);
 
-                        // Store raw 32 bytes of the directory entry for details inspect
                         byte[] rawEntryBytes = new byte[32];
                         System.arraycopy(clusterData, i, rawEntryBytes, 0, 32);
 
@@ -470,10 +470,9 @@ public class FilesystemParser {
         }
     }
 
-    private static String assembleAndValidateFat32Lfn(List<Fat32LfnItem> lfnList, String shortName, byte[] clusterData, int shortNameOffset) {
-        if (lfnList == null || lfnList.isEmpty()) return shortName;
+    private static String assembleAndValidateFat32Lfn(List<Fat32LfnItem> lfnList, String shortNameFormatted, byte[] clusterData, int shortNameOffset) {
+        if (lfnList == null || lfnList.isEmpty()) return shortNameFormatted;
         
-        // Validate checksum of short name against LFN checksum byte at offset 13 of each LFN item
         byte shortNameChecksum = computeShortNameChecksum(clusterData, shortNameOffset);
         boolean checksumValid = true;
         for (Fat32LfnItem item : lfnList) {
@@ -485,22 +484,22 @@ public class FilesystemParser {
         }
 
         StringBuilder sb = new StringBuilder();
-        // LFN items are stored in reverse order in directory before short entry.
-        // We iterate backwards from lfnList.size()-1 down to 0.
+        // Item 2: LFN items are stored in reverse order in directory before short entry.
         for (int i = lfnList.size() - 1; i >= 0; i--) {
             byte[] buf = lfnList.get(i).data;
-            // Offsets for characters in LFN entry: 1-10 (chars 1-5), 14-25 (chars 6-11), 28-31 (chars 12-13)
+            // Offsets: 1-10 (chars 1-5), 14-25 (chars 6-11), 28-31 (chars 12-13)
             int[] indices = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
             for (int idx : indices) {
+                if (idx + 2 > buf.length) break;
                 char c = (char) ByteBuffer.wrap(buf, idx, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
                 if (c == 0 || c == 0xFFFF) break;
                 sb.append(c);
             }
         }
         String lfn = sb.toString().trim();
-        if (lfn.isEmpty()) return shortName;
+        if (lfn.isEmpty()) return shortNameFormatted;
         
-        // Rule 5: If checksum does not match, still use LFN name when consecutive, and fall back only if no LFN.
+        // Item 2: Use LFN if consecutive even if checksum mismatches
         return lfn;
     }
 
