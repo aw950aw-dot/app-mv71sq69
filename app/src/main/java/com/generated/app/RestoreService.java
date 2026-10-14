@@ -111,7 +111,7 @@ public class RestoreService extends Service {
 
     private void createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationManager manager = getSystemService(NotificationManager.class);
+            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (manager != null) {
                 NotificationChannel activeChannel = new NotificationChannel(
                         CHANNEL_ACTIVE_ID,
@@ -346,7 +346,7 @@ public class RestoreService extends Service {
     }
 
     private void updateNotification(String text, int progress, String subText) {
-        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.notify(NOTIFICATION_ID, createNotification(text, progress, subText));
         }
@@ -366,7 +366,7 @@ public class RestoreService extends Service {
         isRestoreRunning = false;
 
         // Replace ongoing notification with final completed notification
-        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
             manager.cancel(NOTIFICATION_ID);
 
