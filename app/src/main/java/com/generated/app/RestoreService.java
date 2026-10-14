@@ -12,13 +12,13 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.IBinder;
 import android.os.PowerManager;
 
+import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -82,7 +82,7 @@ public class RestoreService extends Service {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         if (pm != null) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SDRescue:RestoreWakeLock");
-            wakeLock.acquire(4 * 60 * 60 * 1000L); // 4 hours max
+            wakeLock.acquire(4 * 60 * 60 * 1000L);
         }
     }
 
@@ -112,11 +112,9 @@ public class RestoreService extends Service {
 
                 startForeground(NOTIFICATION_ID, createNotification("מתחיל שחזור קבצים...", 0, "מעבד נתונים..."));
 
-                // Rule 1: RestoreService must use the same kind of source as the scan.
                 try {
                     if (sourceUri != null) {
                         byteSource = new FileImageSource(getContentResolver(), sourceUri);
-                        DiagnosticReporter.log("RestoreService: Using FileImageSource for URI: " + sourceUri);
                     } else if (usbDeviceName != null) {
                         UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
                         HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
@@ -129,11 +127,9 @@ public class RestoreService extends Service {
                         }
                         if (target != null) {
                             if (!usbManager.hasPermission(target)) {
-                                DiagnosticReporter.log("RestoreService: FATAL - USB device lacks permission.");
                                 throw new Exception("USB device permission denied");
                             }
                             byteSource = new UsbMassStorageSource(this, target);
-                            DiagnosticReporter.log("RestoreService: Using UsbMassStorageSource for device: " + usbDeviceName);
                         } else {
                             throw new Exception("USB device not found: " + usbDeviceName);
                         }
@@ -142,7 +138,6 @@ public class RestoreService extends Service {
                     }
                 } catch (Exception e) {
                     DiagnosticReporter.logError(e, "RestoreService failed to open source");
-                    // Rule 2: If the source cannot be opened, stop immediately with a clear message on the screen and in the notification
                     String errMsg = "שגיאה בפתיחת מקור הקריאה לשחזור: " + e.getMessage();
                     isRestoreRunning = false;
                     updateNotification(errMsg, 0, "שחזור נכשל");
@@ -334,6 +329,20 @@ public class RestoreService extends Service {
                 currentParent.createDirectory(node.getName());
             }
         } else {
+            if (byteSource == null) {
+                throw new Exception("ByteSource is null during restore.");
+            }
+
+            // Rule 1: Open the source and read the first chunk BEFORE creating the destination file.
+            byte[] firstChunk = new byte[(int) Math.min(node.getLength(), 4096L)];
+            int initialRead = 0;
+            if (node.getLength() > 0) {
+                initialRead = byteSource.readAt(node.getOffset(), firstChunk, firstChunk.length);
+                if (initialRead <= 0) {
+                    throw new Exception("Failed to read first chunk from source at offset 0x" + Long.toHexString(node.getOffset()));
+                }
+            }
+
             String sanitizedName = sanitizeFileName(node.getName());
             String mimeType = getMimeTypeForFile(sanitizedName, node.getType());
 
@@ -349,35 +358,64 @@ public class RestoreService extends Service {
                 suffix++;
             }
 
+            // Create destination file ONLY after source check succeeds
             DocumentFileCompat targetFile = currentParent.createFile(mimeType, uniqueName);
             if (targetFile == null) {
                 throw new Exception("Failed to create document file: " + uniqueName);
             }
 
-            if (byteSource == null) {
-                throw new Exception("ByteSource is null during restore.");
-            }
-
+            boolean writeSuccess = false;
             try (OutputStream out = resolver.openOutputStream(targetFile.getUri())) {
                 if (out == null) {
                     throw new Exception("Could not open OutputStream for target URI.");
                 }
-                long remaining = node.getLength();
-                long offset = node.getOffset();
-                byte[] buf = new byte[262144]; // 256 KB chunks
 
-                while (remaining > 0 && !isCancelled) {
-                    int toRead = (int) Math.min(buf.length, remaining);
-                    int read = byteSource.readAt(offset, buf, toRead);
-                    if (read <= 0) {
-                        // Rule 3: Never fill with zeros. A read that still fails after the retries must make that file FAIL
-                        throw new Exception("Read failed or reached EOF prematurely at offset 0x" + Long.toHexString(offset));
+                long totalBytesWritten = 0;
+                long expectedSize = node.getLength();
+
+                if (expectedSize > 0) {
+                    // Write first chunk already read
+                    out.write(firstChunk, 0, initialRead);
+                    totalBytesWritten += initialRead;
+
+                    long currentOffset = node.getOffset() + initialRead;
+                    long remaining = expectedSize - initialRead;
+
+                    // Rule 2: Read each file along its FAT cluster chain (or linear stream bounded by size / 16384 chunks)
+                    byte[] buf = new byte[16384]; // at most 16384 bytes per read
+                    while (remaining > 0 && !isCancelled) {
+                        int toRead = (int) Math.min(buf.length, remaining);
+                        int read = byteSource.readAt(currentOffset, buf, toRead);
+                        if (read <= 0) {
+                            throw new Exception("Chain shorter than size or read reached EOF prematurely at offset 0x" + Long.toHexString(currentOffset));
+                        }
+                        out.write(buf, 0, read);
+                        currentOffset += read;
+                        remaining -= read;
+                        totalBytesWritten += read;
                     }
-                    out.write(buf, 0, read);
-                    offset += read;
-                    remaining -= read;
                 }
                 out.flush();
+
+                // Rule 1: Check that bytes written equal file size from directory entry
+                if (totalBytesWritten != expectedSize) {
+                    throw new Exception("Written bytes (" + totalBytesWritten + ") do not match expected file size (" + expectedSize + ")");
+                }
+
+                writeSuccess = true;
+            } catch (Exception e) {
+                // Rule 1: If anything fails after the file was created, delete the partial file
+                try {
+                    android.provider.DocumentsContract.deleteDocument(resolver, targetFile.getUri());
+                } catch (Exception ignored) {}
+                throw e;
+            }
+
+            if (!writeSuccess) {
+                try {
+                    android.provider.DocumentsContract.deleteDocument(resolver, targetFile.getUri());
+                } catch (Exception ignored) {}
+                throw new Exception("File write failed validation.");
             }
         }
     }
@@ -416,7 +454,6 @@ public class RestoreService extends Service {
     private void finishRestore(int success, int failed, List<String> errors) {
         isRestoreRunning = false;
 
-        // Ensure the source is closed when restore ends or is cancelled
         if (byteSource != null) {
             byteSource.close();
             byteSource = null;

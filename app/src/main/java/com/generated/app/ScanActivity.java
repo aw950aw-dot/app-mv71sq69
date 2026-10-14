@@ -33,6 +33,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -977,39 +978,85 @@ public class ScanActivity extends Activity {
                         throw new Exception("No files found in database to perform test restore.");
                     }
 
+                    // Rule 3: Restore one file, then read the destination file back and compare its first 4096 bytes with the card
                     String testFileName = "test_restore_" + sanitizeFileName(testEntry.getName());
                     String mimeType = getMimeTypeForFile(testFileName, testEntry.getType());
+
+                    // Read first chunk from card source before creating destination file
+                    int sampleLen = (int) Math.min(testEntry.getLength(), 4096L);
+                    byte[] cardBuffer = new byte[sampleLen];
+                    int cardRead = byteSource.readAt(testEntry.getOffset(), cardBuffer, sampleLen);
+                    if (cardRead <= 0) {
+                        throw new Exception("Failed to read test sample from source card.");
+                    }
 
                     DocumentFileCompat testFile = rootDir.createFile(mimeType, testFileName);
                     if (testFile == null) {
                         throw new Exception("Failed to create test file in destination tree.");
                     }
 
+                    long restoredSize = 0;
                     try (OutputStream out = getContentResolver().openOutputStream(testFile.getUri())) {
                         if (out == null) {
                             throw new Exception("Could not open OutputStream for test file URI.");
                         }
-                        long remaining = Math.min(testEntry.getLength(), 65536L);
+                        long remaining = testEntry.getLength();
                         long offset = testEntry.getOffset();
-                        byte[] buf = new byte[32768];
+                        byte[] buf = new byte[16384]; // at most 16384 bytes per read
                         while (remaining > 0) {
                             int toRead = (int) Math.min(buf.length, remaining);
                             int read = byteSource.readAt(offset, buf, toRead);
-                            if (read <= 0) break;
+                            if (read <= 0) {
+                                break;
+                            }
                             out.write(buf, 0, read);
                             offset += read;
                             remaining -= read;
+                            restoredSize += read;
                         }
                         out.flush();
                     }
 
-                    final String successMsg = "Test restore successful!\nRestored file: " + testFileName + " (" + testEntry.getLength() + " bytes)";
+                    // Read back the destination file and compare first 4096 bytes with card
+                    byte[] destBuffer = new byte[sampleLen];
+                    try (InputStream in = getContentResolver().openInputStream(testFile.getUri())) {
+                        if (in != null) {
+                            in.read(destBuffer, 0, sampleLen);
+                        }
+                    }
+
+                    boolean matches = true;
+                    for (int i = 0; i < sampleLen; i++) {
+                        if (cardBuffer[i] != destBuffer[i]) {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    boolean isJpg = testEntry.getType() == FileType.JPEG;
+                    boolean isMp4 = testEntry.getType() == FileType.MP4;
+
+                    StringBuilder info = new StringBuilder();
+                    info.append("Restored size: ").append(restoredSize).append(" bytes\n");
+                    info.append("Expected size: ").append(testEntry.getLength()).append(" bytes\n");
+                    info.append("Comparison 4096 bytes: ").append(matches ? "OK" : "NOT OK").append("\n");
+
+                    if (isJpg) {
+                        boolean hasJpgSig = sampleLen >= 3 && (cardBuffer[0] & 0xFF) == 0xFF && (cardBuffer[1] & 0xFF) == 0xD8 && (cardBuffer[2] & 0xFF) == 0xFF;
+                        info.append("JPG signature (FF D8 FF): ").append(hasJpgSig ? "YES" : "NO").append("\n");
+                    }
+                    if (isMp4) {
+                        boolean hasMp4Brand = sampleLen >= 8 && cardBuffer[4] == 'f' && cardBuffer[5] == 't' && cardBuffer[6] == 'y' && cardBuffer[7] == 'p';
+                        info.append("MP4 brand at bytes 4-7 ('ftyp'): ").append(hasMp4Brand ? "YES" : "NO").append("\n");
+                    }
+
+                    final String resultMessage = info.toString();
                     new Handler(Looper.getMainLooper()).post(new Runnable() {
                         @Override
                         public void run() {
                             new AlertDialog.Builder(ScanActivity.this)
                                     .setTitle("Test Restore Result")
-                                    .setMessage(successMsg)
+                                    .setMessage(resultMessage)
                                     .setPositiveButton(android.R.string.ok, null)
                                     .show();
                         }
