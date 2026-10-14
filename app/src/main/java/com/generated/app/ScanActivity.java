@@ -128,6 +128,7 @@ public class ScanActivity extends Activity {
                     updateSummaryBox();
                     updateSelectionCounter();
                     if (!isSearching) reloadCurrentDirectoryFromDb();
+                    checkOrphansAndWarn();
                 }
             } catch (Exception ignored) {}
         }
@@ -166,6 +167,16 @@ public class ScanActivity extends Activity {
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         dbHelper = DatabaseHelper.getInstance(this);
+
+        // Check if database contains results from an older version
+        if (dbHelper.isOlderVersionDb()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("גרסה ישנה")
+                    .setMessage("Results are from an older version, please scan again")
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+        }
+
         currentParentId = dbHelper.getRootId();
         sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
         usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
@@ -207,6 +218,17 @@ public class ScanActivity extends Activity {
             lastBroadcastFolders = ScanService.getFoldersCount();
             tvStatus.setText("סורק... • נמצאו: " + (lastBroadcastFiles + lastBroadcastFolders));
             updateSummaryBoxWithCounts(lastBroadcastFiles, lastBroadcastFolders);
+        }
+    }
+
+    private void checkOrphansAndWarn() {
+        int orphans = dbHelper.getOrphansCount();
+        if (orphans > 0) {
+            new AlertDialog.Builder(this)
+                    .setTitle("אזהרת יתומים (Orphan Warning)")
+                    .setMessage("זוהו " + orphans + " קבצים/תיקיות יתומים (orphans) ללא אב תואם בטבלה.")
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
         }
     }
 
@@ -795,11 +817,14 @@ public class ScanActivity extends Activity {
     }
 
     private void updateSummaryBoxWithCounts(int files, int folders) {
+        int totalNodes = files + folders;
+        int orphans = dbHelper != null ? dbHelper.getOrphansCount() : 0;
         StringBuilder sb = new StringBuilder();
         sb.append("סיכום סריקה:\n");
         sb.append("• מערכת קבצים: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n");
         sb.append("• סך קבצים: ").append(files).append("\n");
-        sb.append("• סך תיקיות: ").append(folders);
+        sb.append("• סך תיקיות: ").append(folders).append("\n");
+        sb.append("nodes: ").append(totalNodes).append(", orphans: ").append(orphans);
         if (tvSummaryBox != null) {
             tvSummaryBox.setText(sb.toString());
         }
@@ -1181,6 +1206,7 @@ public class ScanActivity extends Activity {
                             isDeepScanning = false;
                             tvStatus.setText("הסריקה העמוקה הסתיימה בהצלחה");
                             if (!isSearching) reloadCurrentDirectoryFromDb();
+                            checkOrphansAndWarn();
                         }
                     });
                 } catch (Exception e) {
@@ -1417,21 +1443,25 @@ public class ScanActivity extends Activity {
     }
 
     private void showRawBytesHexDialog(RecoveredEntry entry) {
-        long parentId = entry.getParentId();
-        int childrenCount = dbHelper.getChildrenCountForNode(entry.getId());
-        long firstCluster = entry.getFirstCluster();
+        int childrenParentIdCount = dbHelper.getChildrenCountForNode(entry.getId());
+        int childrenFirstClusterCount = dbHelper.getChildrenCountForFirstCluster(entry.getFirstCluster());
+        int childrenOffsetCount = dbHelper.getChildrenCountForOffset(entry.getOffset());
+        int orphansCount = dbHelper.getOrphansCount();
 
         StringBuilder sb = new StringBuilder();
-        sb.append("=== אבחון פרטי צומת (Node Diagnostics) ===\n");
+        sb.append("=== אבחון פרטי צומת וקישורי תיקיות (Folder Links Diagnostics) ===\n");
         sb.append("• Node ID: ").append(entry.getId()).append("\n");
-        sb.append("• Parent ID: ").append(parentId).append("\n");
-        sb.append("• First Cluster: ").append(firstCluster).append("\n");
-        sb.append("• is_dir: ").append(entry.isDirectory() ? 1 : 0).append("\n");
-        sb.append("• Children count in DB: ").append(childrenCount).append("\n\n");
+        sb.append("• Parent ID: ").append(entry.getParentId()).append("\n");
+        sb.append("• First Cluster: ").append(entry.getFirstCluster()).append("\n");
+        sb.append("• Stored Offset: 0x").append(Long.toHexString(entry.getOffset())).append("\n\n");
+
+        sb.append("• Number of children where parent_id = node id: ").append(childrenParentIdCount).append("\n");
+        sb.append("• Number of children where parent_id = first_cluster: ").append(childrenFirstClusterCount).append("\n");
+        sb.append("• Number of children where parent_id = stored offset: ").append(childrenOffsetCount).append("\n");
+        sb.append("• Number of orphans in the whole table: ").append(orphansCount).append("\n\n");
 
         sb.append("שם הקובץ: ").append(entry.getName()).append("\n");
         sb.append("נתיב: ").append(entry.getPath()).append("\n");
-        sb.append("אופסט: 0x").append(Long.toHexString(entry.getOffset())).append("\n");
         sb.append("גודל: ").append(entry.getLength()).append(" בייטס\n");
         sb.append("סוג: ").append(FileType.safeName(entry.getType())).append("\n\n");
         sb.append("רשומות ספריה גולמיים (כולל LFN במידת הצורך) בתצוגת Hex:\n");

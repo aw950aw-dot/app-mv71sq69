@@ -13,7 +13,7 @@ import java.util.List;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 6;
+    private static final int DATABASE_VERSION = 7; // Upgraded for version tracking & folder links diagnostics
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -29,6 +29,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_RAW_NAME = "raw_name";
     public static final String COL_UNREADABLE = "unreadable";
     public static final String COL_FIRST_CLUSTER = "first_cluster";
+
+    private static final String TABLE_META = "metadata";
+    private static final String COL_META_KEY = "key";
+    private static final String COL_META_VAL = "value";
 
     private static DatabaseHelper instance;
 
@@ -73,6 +77,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_UNREADABLE + " INTEGER DEFAULT 0, " +
                 COL_FIRST_CLUSTER + " INTEGER DEFAULT 0)";
         db.execSQL(createTable);
+
+        String createMeta = "CREATE TABLE " + TABLE_META + " (" +
+                COL_META_KEY + " TEXT PRIMARY KEY, " +
+                COL_META_VAL + " TEXT)";
+        db.execSQL(createMeta);
+
+        // Store DB version signature
+        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '7')");
+
         db.execSQL("CREATE INDEX idx_parent ON " + TABLE_NODES + "(" + COL_PARENT_ID + ")");
         db.execSQL("CREATE INDEX idx_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
         db.execSQL("CREATE INDEX idx_name ON " + TABLE_NODES + "(" + COL_NAME + ")");
@@ -82,13 +95,46 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_NODES);
+        db.execSQL("DROP TABLE IF EXISTS " + TABLE_META);
         onCreate(db);
+    }
+
+    public synchronized boolean isOlderVersionDb() {
+        try {
+            SQLiteDatabase db = getReadableDatabase();
+            Cursor c = db.rawQuery("SELECT " + COL_META_VAL + " FROM " + TABLE_META + " WHERE " + COL_META_KEY + "=?", new String[]{"db_version"});
+            if (c != null) {
+                if (c.moveToFirst()) {
+                    String ver = c.getString(0);
+                    c.close();
+                    if ("7".equals(ver)) {
+                        return false;
+                    }
+                } else {
+                    c.close();
+                }
+            }
+            // If nodes table exists but metadata version is missing or older than 7
+            Cursor checkNodes = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES, null);
+            if (checkNodes != null) {
+                int count = 0;
+                if (checkNodes.moveToFirst()) {
+                    count = checkNodes.getInt(0);
+                }
+                checkNodes.close();
+                if (count > 0) {
+                    return true; // Exists from older version
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     public synchronized void clearDatabase() {
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("DELETE FROM " + TABLE_NODES);
+            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '7')");
         } catch (Exception ignored) {}
     }
 
@@ -224,6 +270,45 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public synchronized int getChildrenCountForNode(long nodeId) {
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=?", new String[]{String.valueOf(nodeId)});
+        int count = 0;
+        if (c != null) {
+            if (c.moveToFirst()) {
+                count = c.getInt(0);
+            }
+            c.close();
+        }
+        return count;
+    }
+
+    public synchronized int getChildrenCountForFirstCluster(long firstCluster) {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=?", new String[]{String.valueOf(firstCluster)});
+        int count = 0;
+        if (c != null) {
+            if (c.moveToFirst()) {
+                count = c.getInt(0);
+            }
+            c.close();
+        }
+        return count;
+    }
+
+    public synchronized int getChildrenCountForOffset(long offset) {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=?", new String[]{String.valueOf(offset)});
+        int count = 0;
+        if (c != null) {
+            if (c.moveToFirst()) {
+                count = c.getInt(0);
+            }
+            c.close();
+        }
+        return count;
+    }
+
+    public synchronized int getOrphansCount() {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " c WHERE c." + COL_PARENT_ID + " != 0 AND c." + COL_PARENT_ID + " NOT IN (SELECT " + COL_ID + " FROM " + TABLE_NODES + ")", null);
         int count = 0;
         if (c != null) {
             if (c.moveToFirst()) {

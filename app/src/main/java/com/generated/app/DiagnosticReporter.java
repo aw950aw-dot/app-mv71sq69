@@ -161,10 +161,14 @@ public class DiagnosticReporter {
         if (db != null) {
             long rootId = db.getRootId();
             int rootChildrenCount = db.getChildrenCountForNode(rootId);
+            int totalNodesCount = db.getTotalFilesCount() + db.getTotalFoldersCount();
+            int orphansCount = db.getOrphansCount();
+
             sb.append("--- סטטיסטיקת שורש (Root DB Stats) ---\n");
             sb.append("• Root Node ID: ").append(rootId).append("\n");
             sb.append("• Root Parent ID: 0\n");
-            sb.append("• Root Children Count: ").append(rootChildrenCount).append("\n\n");
+            sb.append("• Root Children Count: ").append(rootChildrenCount).append("\n");
+            sb.append("nodes: ").append(totalNodesCount).append(", orphans: ").append(orphansCount).append("\n\n");
         }
 
         sb.append("16. 30 שמות קבצים ותיקיות ראשונים שנמצאו עם גודלם:\n");
