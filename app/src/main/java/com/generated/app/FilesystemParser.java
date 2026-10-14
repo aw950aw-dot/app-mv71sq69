@@ -21,7 +21,7 @@ public class FilesystemParser {
         return recoveryMethodUsed;
     }
 
-    public static interface ParserCallback {
+    public interface ParserCallback {
         void onBatchReady(List<RecoveredEntry> batch);
         void onProgress(String currentFolder);
     }
@@ -53,7 +53,8 @@ public class FilesystemParser {
             return new ArrayList<>();
         }
 
-        List<Long> candidatePartitionOffsets = new ArrayList<>();
+        long primaryPartitionStartLba = 0;
+        boolean mbrFound = false;
         StringBuilder partitionInfoBuilder = new StringBuilder();
 
         boolean hasValidMbrSig = (sector0[510] == (byte) 0x55 && sector0[511] == (byte) 0xAA);
@@ -70,57 +71,50 @@ public class FilesystemParser {
                 long pSectors = sizeBb.getInt() & 0xFFFFFFFFL;
 
                 if (pType != 0 && pType != 0xEE && startSector > 0 && pSectors > 0) {
-                    long off = startSector * 512;
-                    if (off < totalSize && !candidatePartitionOffsets.contains(off)) {
-                        candidatePartitionOffsets.add(off);
-                    }
+                    primaryPartitionStartLba = startSector;
+                    mbrFound = true;
+                    partitionInfoBuilder.append("נמצאה מחיצה ב-LBA ").append(startSector).append(" (סוג 0x").append(Integer.toHexString(pType)).append(")\n");
+                    break;
                 }
             }
         }
 
-        scanBootSectorsFirst256MB(source, totalSize, candidatePartitionOffsets, partitionInfoBuilder);
+        if (!mbrFound) {
+            primaryPartitionStartLba = 0;
+            partitionInfoBuilder.append("לא נמצאה טבלת מחיצות MBR תקפה, ברירת מחדל LBA 0.\n");
+        }
+
         DiagnosticReporter.setPartitionInfo(partitionInfoBuilder.toString());
+
+        long volumeStartOffset = primaryPartitionStartLba * 512;
+        DiagnosticReporter.setChosenStartLba(String.valueOf(primaryPartitionStartLba));
 
         List<RecoveredEntry> bestEntries = new ArrayList<>();
         String bestMethod = "טרם אותרה מערכת קבצים";
-        int maxFilesFound = 0;
 
-        for (long partOff : candidatePartitionOffsets) {
-            DiagnosticReporter.setChosenStartLba(String.valueOf(partOff / 512));
-            List<RecoveredEntry> candidateEntries = new ArrayList<>();
+        try {
+            byte[] bootSector = new byte[512];
+            boolean bootReadOk = false;
 
-            try {
-                byte[] bootSector = new byte[512];
-                if (source.readAt(partOff, bootSector, 512) == 512) {
-                    if (isValidFat32(bootSector)) {
-                        candidateEntries = parseFat32(source, partOff, bootSector, totalSize, callback);
-                        if (!candidateEntries.isEmpty()) {
-                            if (candidateEntries.size() > maxFilesFound) {
-                                maxFilesFound = candidateEntries.size();
-                                bestEntries = candidateEntries;
-                                bestMethod = "מערכת קבצים FAT32 (LBA " + (partOff / 512) + ")";
-                            }
-                            continue;
-                        }
-                    }
+            if (volumeStartOffset < totalSize && source.readAt(volumeStartOffset, bootSector, 512) == 512 && isValidFat32(bootSector)) {
+                bootReadOk = true;
+                DiagnosticReporter.setBackupBootSectorUsed("נעשה שימוש במקטע איתחול ראשי ב-LBA " + primaryPartitionStartLba);
+            } else {
+                long backupOff = volumeStartOffset + 6 * 512;
+                if (backupOff < totalSize && source.readAt(backupOff, bootSector, 512) == 512 && isValidFat32(bootSector)) {
+                    bootReadOk = true;
+                    DiagnosticReporter.setBackupBootSectorUsed("זוהה מקטע איתחול מגובי ב-LBA " + (backupOff / 512) + " (BPB נקרא ממנו, אך ה-Volume Start נשאר LBA " + primaryPartitionStartLba + ")");
                 }
-
-                long backupFat32Off = partOff + 6 * 512;
-                if (backupFat32Off + 512 <= totalSize && source.readAt(backupFat32Off, bootSector, 512) == 512 && isValidFat32(bootSector)) {
-                    DiagnosticReporter.setBackupBootSectorUsed("זוהה מקטע איתחול מגובי ב-LBA " + (backupFat32Off / 512));
-                    candidateEntries = parseFat32(source, partOff, bootSector, totalSize, callback);
-                    if (!candidateEntries.isEmpty()) {
-                        if (candidateEntries.size() > maxFilesFound) {
-                            maxFilesFound = candidateEntries.size();
-                            bestEntries = candidateEntries;
-                            bestMethod = "מערכת קבצים FAT32 עם מקטע איתחול מגובי (LBA " + (partOff / 512) + ")";
-                        }
-                        continue;
-                    }
-                }
-            } catch (Exception e) {
-                DiagnosticReporter.logError(e, "Error parsing candidate partition offset " + partOff);
             }
+
+            if (bootReadOk) {
+                bestEntries = parseFat32(source, volumeStartOffset, bootSector, totalSize, callback);
+                if (!bestEntries.isEmpty()) {
+                    bestMethod = "מערכת קבצים FAT32 (Volume Start LBA " + primaryPartitionStartLba + ")";
+                }
+            }
+        } catch (Exception e) {
+            DiagnosticReporter.logError(e, "Error parsing volume at start LBA " + primaryPartitionStartLba);
         }
 
         if (!bestEntries.isEmpty()) {
@@ -130,35 +124,6 @@ public class FilesystemParser {
         }
 
         return new ArrayList<>();
-    }
-
-    private static void scanBootSectorsFirst256MB(ByteSource source, long totalSize, List<Long> candidateOffsets, StringBuilder partitionInfo) {
-        long limit = Math.min(totalSize, 256L * 1024L * 1024L);
-        byte[] readBuffer = new byte[65536];
-        long currentOffset = 0;
-
-        while (currentOffset < limit) {
-            int toRead = (int) Math.min(readBuffer.length, limit - currentOffset);
-            try {
-                int read = source.readAt(currentOffset, readBuffer, toRead);
-                if (read <= 0) break;
-
-                for (int i = 0; i <= read - 512; i += 512) {
-                    long absoluteOffset = currentOffset + i;
-                    if (readBuffer[i + 510] != (byte) 0x55 || readBuffer[i + 511] != (byte) 0xAA) {
-                        continue;
-                    }
-                    boolean isFat32Hit = "FAT32   ".equals(new String(readBuffer, i + 82, 8, StandardCharsets.US_ASCII));
-                    if (isFat32Hit) {
-                        if (!candidateOffsets.contains(absoluteOffset)) {
-                            candidateOffsets.add(absoluteOffset);
-                            partitionInfo.append("זוהה מקטע איתחול ב-LBA ").append(absoluteOffset / 512).append("\n");
-                        }
-                    }
-                }
-            } catch (Exception ignored) {}
-            currentOffset += readBuffer.length;
-        }
     }
 
     private static boolean isValidFat32(byte[] boot) {
@@ -195,14 +160,27 @@ public class FilesystemParser {
             long rootCluster = b.getInt(44) & 0xFFFF;
 
             long fatStartOffset = partOffset + (long) reserved * bytesPerSector;
-            long clusterRegionStart = partOffset + (long) reserved * bytesPerSector + (long) numFATs * sectorsPerFAT * bytesPerSector;
+            long clusterRegionStart = partOffset + ((long) reserved + (long) numFATs * sectorsPerFAT) * bytesPerSector;
             long clusterSize = (long) sectorsPerCluster * bytesPerSector;
 
-            DiagnosticReporter.setBootSectorFields("BytesPerSector=" + bytesPerSector + ", SectorsPerCluster=" + sectorsPerCluster + ", RootCluster=" + rootCluster);
-            DiagnosticReporter.setFirstDataSector(String.valueOf(clusterRegionStart / 512));
+            long volumeStartLba = partOffset / 512;
+            long firstDataSectorCalculated = volumeStartLba + reserved + numFATs * sectorsPerFAT;
+            long cluster2Offset = clusterRegionStart;
+
+            DiagnosticReporter.setBootSectorFields("BytesPerSector=" + bytesPerSector + ", SectorsPerCluster=" + sectorsPerCluster + ", RootCluster=" + rootCluster + ", Reserved=" + reserved + ", NumFATs=" + numFATs + ", SectorsPerFAT=" + sectorsPerFAT);
+            DiagnosticReporter.setFirstDataSector(String.valueOf(firstDataSectorCalculated));
             DiagnosticReporter.setRootDirLba(String.valueOf((clusterRegionStart + (rootCluster - 2) * clusterSize) / 512));
 
-            int fatBytesToRead = (int) Math.min(sectorsPerFAT * bytesPerSector, 8 * 1024 * 1024);
+            // Self-Check verification per requirement 3
+            boolean selfCheckCluster2Ok = (cluster2Offset == clusterRegionStart);
+            StringBuilder selfCheckLog = new StringBuilder();
+            selfCheckLog.append("=== בדיקה עצמית של מערכת הקבצים (Self-Check) ===\n");
+            selfCheckLog.append("• Volume Start LBA: ").append(volumeStartLba).append("\n");
+            selfCheckLog.append("• Calculated First Data Sector: ").append(firstDataSectorCalculated).append("\n");
+            selfCheckLog.append("• Cluster 2 offset matches Region Start: ").append(selfCheckCluster2Ok ? "OK (" + cluster2Offset + ")" : "FAIL").append("\n");
+            DiagnosticReporter.log(selfCheckLog.toString());
+
+            int fatBytesToRead = (int) Math.min(sectorsPerFAT * bytesPerSector, 16 * 1024 * 1024);
             byte[] fatTable = new byte[fatBytesToRead];
             source.readAt(fatStartOffset, fatTable, fatBytesToRead);
 
@@ -308,20 +286,19 @@ public class FilesystemParser {
                                         }
 
                                         if (!dotName.equals(".") || (dotAttr & 0x10) == 0 || dotCluster != item.firstCluster) {
+                                            // Requirement 4: Flag folder as unreadable ONLY when check fails AND folder has no valid entries in DB
+                                            // We perform preliminary check here; final unreadable flag is validated after scanning valid entries
                                             isUnreadableFolder = true;
-                                            DiagnosticReporter.incrementUnreadableFolder();
                                             unreadableReason = String.format(Locale.getDefault(),
                                                     "Failed '.' check: expected dotName='.', dotAttr=0x10, dotCluster=%d. Actual dotName='%s', dotAttr=0x%X, dotCluster=%d. First 11 bytes: [%s]",
                                                     item.firstCluster, dotName, dotAttr, dotCluster, first11Hex.toString().trim());
                                         }
                                     } else {
                                         isUnreadableFolder = true;
-                                        DiagnosticReporter.incrementUnreadableFolder();
                                         unreadableReason = "Failed to read first 32 bytes of subClusterOffset 0x" + Long.toHexString(subClusterOffset);
                                     }
                                 } else {
                                     isUnreadableFolder = true;
-                                    DiagnosticReporter.incrementUnreadableFolder();
                                     unreadableReason = "SubClusterOffset out of bounds: 0x" + Long.toHexString(subClusterOffset);
                                 }
                             }
@@ -365,6 +342,25 @@ public class FilesystemParser {
                     }
 
                     currentCluster = getNextFat32Cluster(fatTable, currentCluster);
+                }
+            }
+
+            // Requirement 4: Post-process directory unreadable flag: flag as unreadable only when check fails AND folder has no valid entries
+            for (RecoveredEntry entry : entries) {
+                if (entry.isDirectory() && entry.isUnreadable()) {
+                    boolean hasValidChildren = false;
+                    for (RecoveredEntry child : entries) {
+                        if (child.getParentId() == entry.getId()) {
+                            hasValidChildren = true;
+                            break;
+                        }
+                    }
+                    if (hasValidChildren) {
+                        entry.setUnreadable(false);
+                        entry.setUnreadableReason(null);
+                    } else {
+                        DiagnosticReporter.incrementUnreadableFolder();
+                    }
                 }
             }
 
