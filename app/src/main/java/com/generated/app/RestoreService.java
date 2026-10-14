@@ -112,7 +112,7 @@ public class RestoreService extends Service {
 
                 startForeground(NOTIFICATION_ID, createNotification("מתחיל שחזור קבצים...", 0, "מעבד נתונים..."));
 
-                // Initialize source matching the scan source
+                // Rule 1: RestoreService must use the same kind of source as the scan.
                 try {
                     if (sourceUri != null) {
                         byteSource = new FileImageSource(getContentResolver(), sourceUri);
@@ -142,8 +142,12 @@ public class RestoreService extends Service {
                     }
                 } catch (Exception e) {
                     DiagnosticReporter.logError(e, "RestoreService failed to open source");
+                    // Rule 2: If the source cannot be opened, stop immediately with a clear message on the screen and in the notification
+                    String errMsg = "שגיאה בפתיחת מקור הקריאה לשחזור: " + e.getMessage();
+                    isRestoreRunning = false;
+                    updateNotification(errMsg, 0, "שחזור נכשל");
                     List<String> errs = new ArrayList<>();
-                    errs.add("שגיאה בפתיחת מקור הקריאה לשחזור: " + e.getMessage());
+                    errs.add(errMsg);
                     finishRestore(0, 1, errs);
                     return START_NOT_STICKY;
                 }
@@ -366,6 +370,7 @@ public class RestoreService extends Service {
                     int toRead = (int) Math.min(buf.length, remaining);
                     int read = byteSource.readAt(offset, buf, toRead);
                     if (read <= 0) {
+                        // Rule 3: Never fill with zeros. A read that still fails after the retries must make that file FAIL
                         throw new Exception("Read failed or reached EOF prematurely at offset 0x" + Long.toHexString(offset));
                     }
                     out.write(buf, 0, read);
@@ -410,6 +415,12 @@ public class RestoreService extends Service {
 
     private void finishRestore(int success, int failed, List<String> errors) {
         isRestoreRunning = false;
+
+        // Ensure the source is closed when restore ends or is cancelled
+        if (byteSource != null) {
+            byteSource.close();
+            byteSource = null;
+        }
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {

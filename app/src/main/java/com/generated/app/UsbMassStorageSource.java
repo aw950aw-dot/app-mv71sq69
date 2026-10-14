@@ -475,9 +475,10 @@ public class UsbMassStorageSource implements ByteSource {
             usbLock.unlock();
         }
 
+        // Rule 3: Never fill with zeros. A read that still fails after the retries must make that file FAIL.
         if (!success) {
-            logDiag("Failed read at offset " + offset + " after 3 retries, filling with zeros.");
-            Arrays.fill(sectorBuffer, (byte) 0);
+            logDiag("Failed read at offset " + offset + " after 3 retries.");
+            throw new IOException("Failed read at offset " + offset + " after 3 retries");
         }
 
         int copyLen = Math.min(len, (int) (bytesToTransfer - sectorOffset));

@@ -1051,13 +1051,6 @@ public class ScanActivity extends Activity {
         sb.append("• שחזור בהצלחה: ").append(success).append(" קבצים\n");
         sb.append("• נכשלו בשחזור: ").append(failed).append(" פריטים\n\n");
 
-        if (lastFailedErrors != null && !lastFailedErrors.isEmpty()) {
-            sb.append("פירוט שגיאות נבחרות:\n");
-            for (String err : lastFailedErrors) {
-                sb.append("• ").append(err).append("\n");
-            }
-        }
-
         TextView tv = new TextView(this);
         tv.setText(sb.toString());
         tv.setTextSize(12);
