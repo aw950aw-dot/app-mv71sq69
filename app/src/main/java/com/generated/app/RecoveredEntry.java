@@ -1,6 +1,7 @@
 package com.generated.app;
 
 public class RecoveredEntry {
+    private final long id;
     private final String name;
     private final String path;
     private final long offset;
@@ -16,7 +17,8 @@ public class RecoveredEntry {
     private int cachedRecursiveFileCount;
     private boolean isUnreadable;
 
-    public RecoveredEntry(String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes) {
+    public RecoveredEntry(long id, String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes) {
+        this.id = id;
         this.name = name != null ? name : "unnamed";
         this.path = path != null ? path : "/";
         this.offset = offset;
@@ -28,6 +30,14 @@ public class RecoveredEntry {
         this.rawNameBytes = rawNameBytes != null ? rawNameBytes : new byte[0];
         this.selectedState = 0;
         this.isUnreadable = false;
+    }
+
+    public RecoveredEntry(String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes) {
+        this(0, name, path, offset, length, type, isDeleted, isDirectory, modifiedTime, rawNameBytes);
+    }
+
+    public long getId() {
+        return id;
     }
 
     public String getName() {

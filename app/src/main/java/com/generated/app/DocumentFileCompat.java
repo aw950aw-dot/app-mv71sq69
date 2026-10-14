@@ -46,6 +46,18 @@ public class DocumentFileCompat {
         return true;
     }
 
+    public long getLength() {
+        try {
+            ContentResolver resolver = context.getContentResolver();
+            try (Cursor c = resolver.query(uri, new String[]{DocumentsContract.Document.COLUMN_SIZE}, null, null, null)) {
+                if (c != null && c.moveToFirst()) {
+                    return c.getLong(0);
+                }
+            }
+        } catch (Exception ignored) {}
+        return -1;
+    }
+
     public DocumentFileCompat findFile(String displayName) {
         if (displayName == null) return null;
         ContentResolver resolver = context.getContentResolver();

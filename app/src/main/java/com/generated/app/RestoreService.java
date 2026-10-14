@@ -15,14 +15,14 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
 
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class RestoreService extends Service {
 
@@ -48,12 +48,16 @@ public class RestoreService extends Service {
     private static volatile boolean isRestoreRunning = false;
     private static int restoredFilesCount = 0;
     private static int failedFilesCount = 0;
+    private static int skippedExistingFilesCount = 0;
+    private static int foldersCreatedCount = 0;
+    private static int foldersReusedCount = 0;
     private static int totalFilesCount = 0;
     private static long totalBytesCount = 0;
     private static long currentBytesRestored = 0;
     private static String currentFileName = "";
     private static int currentPercent = 0;
     private static String currentEtaText = "מחשב זמן נותר...";
+    private static final Map<String, Integer> failureCausesMap = new HashMap<>();
 
     public static boolean isRestoreRunning() {
         return isRestoreRunning;
@@ -61,6 +65,9 @@ public class RestoreService extends Service {
 
     public static int getRestoredFilesCount() { return restoredFilesCount; }
     public static int getFailedFilesCount() { return failedFilesCount; }
+    public static int getSkippedExistingFilesCount() { return skippedExistingFilesCount; }
+    public static int getFoldersCreatedCount() { return foldersCreatedCount; }
+    public static int getFoldersReusedCount() { return foldersReusedCount; }
     public static int getTotalFilesCount() { return totalFilesCount; }
     public static long getTotalBytesCount() { return totalBytesCount; }
     public static long getCurrentBytesRestored() { return currentBytesRestored; }
@@ -107,8 +114,12 @@ public class RestoreService extends Service {
                 isRestoreRunning = true;
                 restoredFilesCount = 0;
                 failedFilesCount = 0;
+                skippedExistingFilesCount = 0;
+                foldersCreatedCount = 0;
+                foldersReusedCount = 0;
                 currentBytesRestored = 0;
                 currentPercent = 0;
+                failureCausesMap.clear();
 
                 startForeground(NOTIFICATION_ID, createNotification("מתחיל שחזור קבצים...", 0, "מעבד נתונים..."));
 
@@ -143,7 +154,7 @@ public class RestoreService extends Service {
                     updateNotification(errMsg, 0, "שחזור נכשל");
                     List<String> errs = new ArrayList<>();
                     errs.add(errMsg);
-                    finishRestore(0, 1, errs);
+                    finishRestore(0, 1, 0, errs);
                     return START_NOT_STICKY;
                 }
 
@@ -210,18 +221,79 @@ public class RestoreService extends Service {
                 ContentResolver resolver = getContentResolver();
                 List<String> errorLogs = new ArrayList<>();
 
-                List<RecoveredEntry> entriesToRestore = saveAll ? dbHelper.getAllEntriesForSaveAll() : dbHelper.getAllSelectedFiles();
-                totalFilesCount = entriesToRestore.size();
-                totalBytesCount = 0;
-                for (RecoveredEntry e : entriesToRestore) {
-                    if (!e.isDirectory()) totalBytesCount += e.getLength();
-                }
-
                 DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(RestoreService.this, treeUri);
                 if (rootDir == null || !rootDir.canWrite()) {
                     errorLogs.add("תקיית היעד אינה נגישה או שאין הרשאת כתיבה.");
-                    finishRestore(0, entriesToRestore.size(), errorLogs);
+                    finishRestore(0, 0, 0, errorLogs);
                     return;
+                }
+
+                // 1) Load all folders ordered top-down by depth
+                List<RecoveredEntry> orderedFolders = dbHelper.getOrderedFoldersForRestore(saveAll);
+                HashMap<Long, DocumentFileCompat> folderMap = new HashMap<>();
+                // Map root "/" to destination rootDir
+                folderMap.put(0L, rootDir);
+
+                for (RecoveredEntry folderEntry : orderedFolders) {
+                    if (isCancelled) break;
+                    try {
+                        long parentId = dbHelper.getParentId(folderEntry.getPath(), folderEntry.getName());
+                        DocumentFileCompat parentDoc = folderMap.get(parentId);
+                        if (parentDoc == null) {
+                            parentDoc = rootDir;
+                        }
+
+                        String folderName = sanitizeFileName(folderEntry.getName());
+                        DocumentFileCompat existing = parentDoc.findFile(folderName);
+                        if (existing != null && existing.canWrite()) {
+                            foldersReusedCount++;
+                            folderMap.put(folderEntry.getId(), existing);
+                        } else {
+                            // Create directory with retry logic per requirement 3
+                            DocumentFileCompat created = null;
+                            try {
+                                created = parentDoc.createDirectory(folderName);
+                            } catch (Exception ignored) {}
+
+                            if (created == null) {
+                                try {
+                                    Thread.sleep(500);
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                    break;
+                                }
+                                created = parentDoc.createDirectory(folderName);
+                            }
+
+                            if (created == null) {
+                                existing = parentDoc.findFile(folderName);
+                                if (existing != null) {
+                                    foldersReusedCount++;
+                                    folderMap.put(folderEntry.getId(), existing);
+                                } else {
+                                    throw new Exception("Failed to create directory after retry: " + folderName);
+                                }
+                            } else {
+                                foldersCreatedCount++;
+                                folderMap.put(folderEntry.getId(), created);
+                            }
+                        }
+                    } catch (Exception e) {
+                        StringWriter sw = new StringWriter();
+                        e.printStackTrace(new PrintWriter(sw));
+                        String errInfo = "נכשלה יצירת תיקייה " + folderEntry.getName() + ": " + e.getMessage();
+                        errorLogs.add(errInfo);
+                        recordFailureCause(e.getMessage());
+                        DiagnosticReporter.logError(e, "Folder creation failed");
+                    }
+                }
+
+                // 2) Load files to restore
+                List<RecoveredEntry> filesToRestore = dbHelper.getFilesForRestore(saveAll);
+                totalFilesCount = filesToRestore.size();
+                totalBytesCount = 0;
+                for (RecoveredEntry e : filesToRestore) {
+                    totalBytesCount += e.getLength();
                 }
 
                 long startTime = System.currentTimeMillis();
@@ -238,14 +310,22 @@ public class RestoreService extends Service {
                     byteHistory[i] = 0;
                 }
 
-                for (int i = 0; i < entriesToRestore.size(); i++) {
+                for (int i = 0; i < filesToRestore.size(); i++) {
                     if (isCancelled) break;
-                    RecoveredEntry entry = entriesToRestore.get(i);
+                    RecoveredEntry entry = filesToRestore.get(i);
                     currentFileName = entry.getName();
 
                     try {
-                        saveNodeToDestination(resolver, rootDir, entry, errorLogs);
-                        if (!entry.isDirectory()) {
+                        long parentId = dbHelper.getParentId(entry.getPath(), entry.getName());
+                        DocumentFileCompat parentDoc = folderMap.get(parentId);
+                        if (parentDoc == null) {
+                            parentDoc = rootDir;
+                        }
+
+                        boolean skipped = saveFileToParent(resolver, parentDoc, entry, errorLogs);
+                        if (skipped) {
+                            skippedExistingFilesCount++;
+                        } else {
                             restoredFilesCount++;
                             currentBytesRestored += entry.getLength();
                             bytesSinceLastHistory += entry.getLength();
@@ -254,6 +334,7 @@ public class RestoreService extends Service {
                         failedFilesCount++;
                         String errInfo = "נכשל " + entry.getName() + " (Offset: 0x" + Long.toHexString(entry.getOffset()) + "): " + e.getMessage();
                         errorLogs.add(errInfo);
+                        recordFailureCause(e.getMessage());
                         DiagnosticReporter.logError(e, "Restore file failed completely");
                     }
 
@@ -286,7 +367,7 @@ public class RestoreService extends Service {
                     long remainingMin = Math.max(1, remainingSec / 60);
 
                     currentEtaText = String.format(Locale.getDefault(), "קבצים %d מתוך %d · %.2f GB מתוך %.2f GB · נשארו כ-%d דקות",
-                            (restoredFilesCount + failedFilesCount), totalFilesCount, gbRestored, gbTotal, remainingMin);
+                            (restoredFilesCount + skippedExistingFilesCount + failedFilesCount), totalFilesCount, gbRestored, gbTotal, remainingMin);
 
                     if (now - lastNotificationUpdate >= 500) {
                         lastNotificationUpdate = now;
@@ -295,129 +376,101 @@ public class RestoreService extends Service {
                     }
                 }
 
-                finishRestore(restoredFilesCount, failedFilesCount, errorLogs);
+                finishRestore(restoredFilesCount, failedFilesCount, skippedExistingFilesCount, errorLogs);
             }
         });
         restoreThread.start();
     }
 
-    private void saveNodeToDestination(ContentResolver resolver, DocumentFileCompat rootDir, RecoveredEntry node, List<String> errorLogs) throws Exception {
-        String path = node.getPath();
-        DocumentFileCompat currentParent = rootDir;
+    private void recordFailureCause(String message) {
+        if (message == null) message = "Unknown error";
+        int count = failureCausesMap.containsKey(message) ? failureCausesMap.get(message) : 0;
+        failureCausesMap.put(message, count + 1);
+    }
 
-        if (path != null && !path.equals("/")) {
-            String[] segments = path.split("/");
-            for (String seg : segments) {
-                if (seg.isEmpty()) continue;
-                DocumentFileCompat foundSub = currentParent.findFile(seg);
-                if (foundSub != null) {
-                    currentParent = foundSub;
-                } else {
-                    DocumentFileCompat createdSub = currentParent.createDirectory(seg);
-                    if (createdSub != null) {
-                        currentParent = createdSub;
-                    } else {
-                        throw new Exception("Failed to create directory: " + seg);
-                    }
+    private boolean saveFileToParent(ContentResolver resolver, DocumentFileCompat parentDoc, RecoveredEntry node, List<String> errorLogs) throws Exception {
+        if (byteSource == null) {
+            throw new Exception("ByteSource is null during restore.");
+        }
+
+        String sanitizedName = sanitizeFileName(node.getName());
+        DocumentFileCompat existing = parentDoc.findFile(sanitizedName);
+        if (existing != null) {
+            try {
+                long existingLen = existing.getLength();
+                if (existingLen == node.getLength() && existingLen >= 0) {
+                    return true; // Skip as already exists with same size
                 }
+            } catch (Exception ignored) {}
+        }
+
+        byte[] firstChunk = new byte[(int) Math.min(node.getLength(), 4096L)];
+        int initialRead = 0;
+        if (node.getLength() > 0) {
+            initialRead = byteSource.readAt(node.getOffset(), firstChunk, firstChunk.length);
+            if (initialRead <= 0) {
+                throw new Exception("Failed to read first chunk from source at offset 0x" + Long.toHexString(node.getOffset()));
             }
         }
 
-        if (node.isDirectory()) {
-            DocumentFileCompat foundDir = currentParent.findFile(node.getName());
-            if (foundDir == null) {
-                currentParent.createDirectory(node.getName());
-            }
-        } else {
-            if (byteSource == null) {
-                throw new Exception("ByteSource is null during restore.");
-            }
+        String mimeType = getMimeTypeForFile(sanitizedName, node.getType());
 
-            // Rule 1: Open the source and read the first chunk BEFORE creating the destination file.
-            byte[] firstChunk = new byte[(int) Math.min(node.getLength(), 4096L)];
-            int initialRead = 0;
-            if (node.getLength() > 0) {
-                initialRead = byteSource.readAt(node.getOffset(), firstChunk, firstChunk.length);
-                if (initialRead <= 0) {
-                    throw new Exception("Failed to read first chunk from source at offset 0x" + Long.toHexString(node.getOffset()));
-                }
-            }
-
-            String sanitizedName = sanitizeFileName(node.getName());
-            String mimeType = getMimeTypeForFile(sanitizedName, node.getType());
-
-            String uniqueName = sanitizedName;
-            int suffix = 1;
-            while (currentParent.findFile(uniqueName) != null) {
-                int dotIdx = sanitizedName.lastIndexOf('.');
-                if (dotIdx > 0) {
-                    uniqueName = sanitizedName.substring(0, dotIdx) + "_" + suffix + sanitizedName.substring(dotIdx);
-                } else {
-                    uniqueName = sanitizedName + "_" + suffix;
-                }
-                suffix++;
-            }
-
-            // Create destination file ONLY after source check succeeds
-            DocumentFileCompat targetFile = currentParent.createFile(mimeType, uniqueName);
-            if (targetFile == null) {
-                throw new Exception("Failed to create document file: " + uniqueName);
-            }
-
-            boolean writeSuccess = false;
-            try (OutputStream out = resolver.openOutputStream(targetFile.getUri())) {
-                if (out == null) {
-                    throw new Exception("Could not open OutputStream for target URI.");
-                }
-
-                long totalBytesWritten = 0;
-                long expectedSize = node.getLength();
-
-                if (expectedSize > 0) {
-                    // Write first chunk already read
-                    out.write(firstChunk, 0, initialRead);
-                    totalBytesWritten += initialRead;
-
-                    long currentOffset = node.getOffset() + initialRead;
-                    long remaining = expectedSize - initialRead;
-
-                    // Rule 2: Read each file along its FAT cluster chain (or linear stream bounded by size / 16384 chunks)
-                    byte[] buf = new byte[16384]; // at most 16384 bytes per read
-                    while (remaining > 0 && !isCancelled) {
-                        int toRead = (int) Math.min(buf.length, remaining);
-                        int read = byteSource.readAt(currentOffset, buf, toRead);
-                        if (read <= 0) {
-                            throw new Exception("Chain shorter than size or read reached EOF prematurely at offset 0x" + Long.toHexString(currentOffset));
-                        }
-                        out.write(buf, 0, read);
-                        currentOffset += read;
-                        remaining -= read;
-                        totalBytesWritten += read;
-                    }
-                }
-                out.flush();
-
-                // Rule 1: Check that bytes written equal file size from directory entry
-                if (totalBytesWritten != expectedSize) {
-                    throw new Exception("Written bytes (" + totalBytesWritten + ") do not match expected file size (" + expectedSize + ")");
-                }
-
-                writeSuccess = true;
-            } catch (Exception e) {
-                // Rule 1: If anything fails after the file was created, delete the partial file
-                try {
-                    android.provider.DocumentsContract.deleteDocument(resolver, targetFile.getUri());
-                } catch (Exception ignored) {}
-                throw e;
-            }
-
-            if (!writeSuccess) {
-                try {
-                    android.provider.DocumentsContract.deleteDocument(resolver, targetFile.getUri());
-                } catch (Exception ignored) {}
-                throw new Exception("File write failed validation.");
-            }
+        DocumentFileCompat targetFile = parentDoc.createFile(mimeType, sanitizedName);
+        if (targetFile == null) {
+            throw new Exception("Failed to create document file: " + sanitizedName);
         }
+
+        boolean writeSuccess = false;
+        try (OutputStream out = resolver.openOutputStream(targetFile.getUri())) {
+            if (out == null) {
+                throw new Exception("Could not open OutputStream for target URI.");
+            }
+
+            long totalBytesWritten = 0;
+            long expectedSize = node.getLength();
+
+            if (expectedSize > 0) {
+                out.write(firstChunk, 0, initialRead);
+                totalBytesWritten += initialRead;
+
+                long currentOffset = node.getOffset() + initialRead;
+                long remaining = expectedSize - initialRead;
+
+                byte[] buf = new byte[16384];
+                while (remaining > 0 && !isCancelled) {
+                    int toRead = (int) Math.min(buf.length, remaining);
+                    int read = byteSource.readAt(currentOffset, buf, toRead);
+                    if (read <= 0) {
+                        throw new Exception("Chain shorter than size or read reached EOF prematurely at offset 0x" + Long.toHexString(currentOffset));
+                    }
+                    out.write(buf, 0, read);
+                    currentOffset += read;
+                    remaining -= read;
+                    totalBytesWritten += read;
+                }
+            }
+            out.flush();
+
+            if (totalBytesWritten != expectedSize) {
+                throw new Exception("Written bytes (" + totalBytesWritten + ") do not match expected file size (" + expectedSize + ")");
+            }
+
+            writeSuccess = true;
+        } catch (Exception e) {
+            try {
+                android.provider.DocumentsContract.deleteDocument(resolver, targetFile.getUri());
+            } catch (Exception ignored) {}
+            throw e;
+        }
+
+        if (!writeSuccess) {
+            try {
+                android.provider.DocumentsContract.deleteDocument(resolver, targetFile.getUri());
+            } catch (Exception ignored) {}
+            throw new Exception("File write failed validation.");
+        }
+
+        return false;
     }
 
     private String getMimeTypeForFile(String fileName, FileType type) {
@@ -444,6 +497,7 @@ public class RestoreService extends Service {
     private void broadcastProgress() {
         Intent intent = new Intent(ACTION_PROGRESS);
         intent.putExtra("restored", restoredFilesCount);
+        intent.putExtra("skipped", skippedExistingFilesCount);
         intent.putExtra("failed", failedFilesCount);
         intent.putExtra("total", totalFilesCount);
         intent.putExtra("percent", currentPercent);
@@ -451,7 +505,7 @@ public class RestoreService extends Service {
         sendBroadcast(intent);
     }
 
-    private void finishRestore(int success, int failed, List<String> errors) {
+    private void finishRestore(int success, int failed, int skipped, List<String> errors) {
         isRestoreRunning = false;
 
         if (byteSource != null) {
@@ -473,7 +527,7 @@ public class RestoreService extends Service {
                 builder = new Notification.Builder(this);
             }
 
-            String summaryMsg = String.format(Locale.getDefault(), "השחזור הסתיים: %d שחזור מוצלח, %d נכשלו", success, failed);
+            String summaryMsg = String.format(Locale.getDefault(), "השחזור הסתיים: %d שוחזרו, %d דולגו, %d נכשלו", success, skipped, failed);
             builder.setContentTitle("SD Rescue - שחזור הושלם")
                     .setContentText(summaryMsg)
                     .setSmallIcon(android.R.drawable.ic_menu_info_details)
@@ -486,6 +540,9 @@ public class RestoreService extends Service {
         Intent intent = new Intent(ACTION_COMPLETED);
         intent.putExtra("success", success);
         intent.putExtra("failed", failed);
+        intent.putExtra("skipped", skipped);
+        intent.putExtra("folders_created", foldersCreatedCount);
+        intent.putExtra("folders_reused", foldersReusedCount);
         sendBroadcast(intent);
 
         stopSelf();
