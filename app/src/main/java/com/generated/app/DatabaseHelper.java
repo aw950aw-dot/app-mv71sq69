@@ -42,7 +42,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     @Override
     public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
-        db.setWriteAheadLoggingEnabled(true);
+        setWriteAheadLoggingEnabled(true);
         db.execSQL("PRAGMA busy_timeout = 15000;");
     }
 
