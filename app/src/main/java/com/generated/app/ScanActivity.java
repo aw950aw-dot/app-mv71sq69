@@ -7,15 +7,18 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -94,6 +97,9 @@ public class ScanActivity extends Activity {
 
     private int lastBroadcastFiles = 0;
     private int lastBroadcastFolders = 0;
+
+    private boolean saveAllModeFlag = true;
+    private boolean isTestRestoreFlag = false;
 
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private Runnable searchRunnable;
@@ -430,14 +436,14 @@ public class ScanActivity extends Activity {
         btnSaveSelected.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                checkAndPromptDestination(false);
+                promptForSaveDirectory(false, false);
             }
         });
 
         btnSaveAll.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                checkAndPromptDestination(true);
+                promptForSaveDirectory(true, false);
             }
         });
 
@@ -611,7 +617,7 @@ public class ScanActivity extends Activity {
         btnTestRestore.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                checkAndPromptDestinationForTest();
+                promptForSaveDirectory(false, true);
             }
         });
 
@@ -923,44 +929,27 @@ public class ScanActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    private void checkAndPromptDestination(boolean saveAll) {
-        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-        String savedUriStr = prefs.getString(PREF_DEST_URI, null);
-        if (savedUriStr != null) {
-            Uri destUri = Uri.parse(savedUriStr);
-            try {
-                getContentResolver().takePersistableUriPermission(destUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-                startRestoreService(destUri, saveAll);
-                return;
-            } catch (Exception ignored) {}
-        }
-        promptForSaveDirectory(saveAll, false);
-    }
-
-    private void checkAndPromptDestinationForTest() {
-        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-        String savedUriStr = prefs.getString(PREF_DEST_URI, null);
-        if (savedUriStr != null) {
-            Uri destUri = Uri.parse(savedUriStr);
-            try {
-                getContentResolver().takePersistableUriPermission(destUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-                runTestRestore(destUri);
-                return;
-            } catch (Exception ignored) {}
-        }
-        promptForSaveDirectory(false, true);
-    }
-
-    private boolean saveAllModeFlag = true;
-    private boolean isTestRestoreFlag = false;
-
     private void promptForSaveDirectory(boolean saveAll, boolean isTest) {
         this.saveAllModeFlag = saveAll;
         this.isTestRestoreFlag = isTest;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        
+        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+        String savedUriStr = prefs.getString(PREF_DEST_URI, null);
+        if (savedUriStr != null) {
+            try {
+                Uri initialUri = Uri.parse(savedUriStr);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri);
+                }
+            } catch (Exception ignored) {}
+        }
+
         try {
             startActivityForResult(intent, REQUEST_CODE_SAVE_DIR);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Toast.makeText(this, "שגיאה בפתיחת בורר התיקיות", Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override
@@ -968,24 +957,89 @@ public class ScanActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_CODE_SAVE_DIR && resultCode == RESULT_OK) {
             if (data != null && data.getData() != null) {
-                Uri treeUri = data.getData();
+                final Uri treeUri = data.getData();
                 try {
                     getContentResolver().takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                     SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
                     prefs.edit().putString(PREF_DEST_URI, treeUri.toString()).apply();
                 } catch (Exception ignored) {}
 
-                if (isTestRestoreFlag) {
-                    runTestRestore(treeUri);
-                } else {
-                    startRestoreService(treeUri, saveAllModeFlag);
-                }
+                // Compute details for confirmation dialog
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        long count = 0;
+                        long bytes = 0;
+                        if (isTestRestoreFlag) {
+                            count = 1;
+                            bytes = 4096;
+                        } else if (saveAllModeFlag) {
+                            List<RecoveredEntry> allFiles = dbHelper.getAllEntriesForSaveAll();
+                            for (RecoveredEntry e : allFiles) {
+                                if (!e.isDirectory()) {
+                                    count++;
+                                    bytes += e.getLength();
+                                }
+                            }
+                        } else {
+                            long[] stats = dbHelper.getSelectedStats();
+                            count = stats[0];
+                            bytes = stats[1];
+                        }
+
+                        final long finalCount = count;
+                        final long finalBytes = bytes;
+                        final String readablePath = getReadablePathFromTreeUri(treeUri);
+
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                showRestoreConfirmationDialog(treeUri, finalCount, finalBytes, readablePath);
+                            }
+                        });
+                    }
+                }).start();
             }
         } else if (requestCode == REQUEST_CODE_SAVE_REPORT && resultCode == RESULT_OK) {
             if (data != null && data.getData() != null) {
                 writeReportToFile(data.getData());
             }
         }
+    }
+
+    private String getReadablePathFromTreeUri(Uri treeUri) {
+        if (treeUri == null) return "Unknown";
+        String path = treeUri.getPath();
+        if (path != null) {
+            if (path.contains("tree/")) {
+                String sub = path.substring(path.indexOf("tree/") + 5);
+                sub = sub.replace("%3A", ":").replace("%2F", "/");
+                return sub;
+            }
+        }
+        return treeUri.toString();
+    }
+
+    private void showRestoreConfirmationDialog(final Uri treeUri, long fileCount, long totalBytes, String readablePath) {
+        String message = String.format(Locale.getDefault(),
+                "Restore %d files (%s) to:\n%s",
+                fileCount, formatSize(totalBytes), readablePath);
+
+        new AlertDialog.Builder(this)
+                .setTitle("אישור שחזור")
+                .setMessage(message)
+                .setPositiveButton("Start", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (isTestRestoreFlag) {
+                            runTestRestore(treeUri);
+                        } else {
+                            startRestoreService(treeUri, saveAllModeFlag);
+                        }
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void writeReportToFile(Uri uri) {
@@ -1208,7 +1262,7 @@ public class ScanActivity extends Activity {
                         @Override
                         public void onProgress(final long bytesScanned, final long totalBytes) {
                             final int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-                            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            new Handler(Looper.getMainLocat().getMainLooper()).post(new Runnable() {
                                 @Override
                                 public void run() {
                                     tvStatus.setText("סריקה עמוקה... (" + percent + "%)");
