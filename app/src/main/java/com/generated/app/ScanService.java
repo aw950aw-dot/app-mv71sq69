@@ -78,72 +78,84 @@ public class ScanService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null) {
-            String action = intent.getAction();
-            if (ACTION_PAUSE.equals(action)) {
-                isPaused = true;
-                updateNotification("הסריקה מושהית...", 0);
-                return START_NOT_STICKY;
-            } else if (ACTION_RESUME.equals(action)) {
-                isPaused = false;
-                updateNotification("מחלץ קבצים...", 0);
-                return START_NOT_STICKY;
-            } else if (ACTION_CANCEL.equals(action)) {
-                isCancelled = true;
-                isScanRunning = false;
-                if (scanThread != null) scanThread.interrupt();
-                stopSelf();
-                return START_NOT_STICKY;
+        try {
+            if (intent != null) {
+                String action = intent.getAction();
+                if (ACTION_PAUSE.equals(action)) {
+                    isPaused = true;
+                    updateNotification("הסריקה מושהית...", 0);
+                    return START_NOT_STICKY;
+                } else if (ACTION_RESUME.equals(action)) {
+                    isPaused = false;
+                    updateNotification("מחלץ קבצים...", 0);
+                    return START_NOT_STICKY;
+                } else if (ACTION_CANCEL.equals(action)) {
+                    isCancelled = true;
+                    isScanRunning = false;
+                    if (scanThread != null) scanThread.interrupt();
+                    stopSelf();
+                    return START_NOT_STICKY;
+                }
             }
-        }
 
-        if (intent != null && scanThread == null) {
-            Uri uri = intent.getParcelableExtra(EXTRA_URI);
-            String usbName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
+            if (intent != null && scanThread == null) {
+                Uri uri = intent.getParcelableExtra(EXTRA_URI);
+                String usbName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
 
-            DiagnosticReporter.clear();
-            dbHelper.clearDatabase();
-            filesCount.set(0);
-            foldersCount.set(0);
-            totalBytesScanned.set(0);
-            errorsCount.set(0);
-            currentFolderPath = "/";
-            isScanRunning = true;
+                DiagnosticReporter.clear();
+                try {
+                    dbHelper.clearDatabase();
+                } catch (Exception dbEx) {
+                    DiagnosticReporter.logError(dbEx, "Failed to clear database on startup");
+                }
 
-            try {
-                if (uri != null) {
-                    byteSource = new FileImageSource(getContentResolver(), uri);
-                    DiagnosticReporter.log("Opened Content Uri successfully.");
-                } else if (usbName != null) {
-                    UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
-                    HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
-                    UsbDevice target = null;
-                    for (UsbDevice d : deviceList.values()) {
-                        if (d.getDeviceName().equals(usbName)) {
-                            target = d;
-                            break;
+                filesCount.set(0);
+                foldersCount.set(0);
+                totalBytesScanned.set(0);
+                errorsCount.set(0);
+                currentFolderPath = "/";
+                isScanRunning = true;
+
+                try {
+                    if (uri != null) {
+                        byteSource = new FileImageSource(getContentResolver(), uri);
+                        DiagnosticReporter.log("Opened Content Uri successfully.");
+                    } else if (usbName != null) {
+                        UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+                        HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+                        UsbDevice target = null;
+                        for (UsbDevice d : deviceList.values()) {
+                            if (d.getDeviceName().equals(usbName)) {
+                                target = d;
+                                break;
+                            }
+                        }
+                        if (target != null) {
+                            byteSource = new UsbMassStorageSource(this, target);
+                            DiagnosticReporter.log("Opened UsbMassStorageSource successfully for device: " + usbName);
                         }
                     }
-                    if (target != null) {
-                        byteSource = new UsbMassStorageSource(this, target);
-                        DiagnosticReporter.log("Opened UsbMassStorageSource successfully for device: " + usbName);
-                    }
+                } catch (Exception e) {
+                    DiagnosticReporter.log("FATAL: Failed to open source: " + e.getMessage());
+                    DiagnosticReporter.logError(e, "Failed to open scan source");
+                    isScanRunning = false;
+                    stopSelf();
+                    return START_NOT_STICKY;
                 }
-            } catch (Exception e) {
-                DiagnosticReporter.log("FATAL: Failed to open source: " + e.getMessage());
-                isScanRunning = false;
-                stopSelf();
-                return START_NOT_STICKY;
-            }
 
-            if (byteSource != null) {
-                carver = new Carver();
-                startForeground(NOTIFICATION_ID, createNotification("מחלץ קבצים...", 0));
-                startScanThread();
-            } else {
-                isScanRunning = false;
-                stopSelf();
+                if (byteSource != null) {
+                    carver = new Carver();
+                    startForeground(NOTIFICATION_ID, createNotification("מחלץ קבצים...", 0));
+                    startScanThread();
+                } else {
+                    isScanRunning = false;
+                    stopSelf();
+                }
             }
+        } catch (Throwable t) {
+            DiagnosticReporter.logError(t, "Exception in ScanService.onStartCommand");
+            isScanRunning = false;
+            stopSelf();
         }
 
         return START_STICKY;
@@ -294,7 +306,6 @@ public class ScanService extends Service {
 
     private synchronized void throttleBroadcast(String currentFolder) {
         long now = System.currentTimeMillis();
-        // Throttle to at most 2 per second (500 ms interval)
         if (now - lastBroadcastTime >= 500) {
             lastBroadcastTime = now;
             broadcastProgress(currentFolder, filesCount.get(), foldersCount.get());

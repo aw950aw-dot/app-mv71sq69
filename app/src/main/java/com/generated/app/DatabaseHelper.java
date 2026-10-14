@@ -43,7 +43,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         setWriteAheadLoggingEnabled(true);
-        db.execSQL("PRAGMA busy_timeout = 15000;");
+        try {
+            Cursor c = db.rawQuery("PRAGMA busy_timeout = 15000", null);
+            if (c != null) {
+                c.moveToFirst();
+                c.close();
+            }
+        } catch (Exception e) {
+            DiagnosticReporter.logError(e, "Failed to set busy_timeout via rawQuery");
+        }
     }
 
     @Override
@@ -71,8 +79,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public synchronized void clearDatabase() {
-        SQLiteDatabase db = getWritableDatabase();
-        db.execSQL("DELETE FROM " + TABLE_NODES);
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            db.execSQL("DELETE FROM " + TABLE_NODES);
+        } catch (Exception e) {
+            DiagnosticReporter.logError(e, "clearDatabase failed");
+        }
     }
 
     public synchronized void insertEntriesInBatch(List<RecoveredEntry> entries) {
