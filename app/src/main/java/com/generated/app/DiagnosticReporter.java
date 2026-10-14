@@ -9,7 +9,6 @@ import java.util.Map;
 
 public class DiagnosticReporter {
     private static final List<String> logs = new ArrayList<>();
-    private static final List<String> errorStackTraces = new ArrayList<>();
     private static final Map<String, Integer> errorCountsMap = new HashMap<>();
     private static final Map<String, List<String>> errorExamplesMap = new HashMap<>();
     private static final List<FileInfoRecord> firstFilesList = new ArrayList<>();
@@ -40,7 +39,6 @@ public class DiagnosticReporter {
 
     public static synchronized void clear() {
         logs.clear();
-        errorStackTraces.clear();
         errorCountsMap.clear();
         errorExamplesMap.clear();
         firstFilesList.clear();
@@ -97,10 +95,6 @@ public class DiagnosticReporter {
     public static synchronized void setFilesFoldersCounts(int files, int folders) {
         filesFoundCount = files;
         foldersFoundCount = folders;
-    }
-
-    public static synchronized List<String> getLogs() {
-        return new ArrayList<>(logs);
     }
 
     public static synchronized void setPartitionInfo(String info) {
@@ -174,7 +168,7 @@ public class DiagnosticReporter {
         }
         sb.append("\n");
 
-        sb.append("14. שגיאות מקובצות לפי סיבה ומופעים:\n");
+        sb.append("14. שגיאות מקובצות לפי סיבה ומופעים (עד 20 דוגמאות לכל סיבה):\n");
         if (errorCountsMap.isEmpty()) {
             sb.append("(אין שגיאות לתצוגה)\n");
         } else {

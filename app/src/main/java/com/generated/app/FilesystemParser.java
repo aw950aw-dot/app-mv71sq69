@@ -286,7 +286,7 @@ public class FilesystemParser {
                         String shortNameRaw = CodepageDecoder.decode83(clusterData, i, 11);
                         String shortNameFormatted = CodepageDecoder.formatShortName(shortNameRaw);
                         
-                        // Item 2: Assemble LFN entries (0x0F, 13 UTF-16LE chars per entry from byte offsets 1-10, 14-25 and 28-31)
+                        // Item 2: Assemble LFN entries (attribute 0x0F, 13 UTF-16LE chars per entry from byte offsets 1-10, 14-25 and 28-31)
                         String resolvedName = assembleAndValidateFat32Lfn(lfnBuffer, shortNameFormatted, clusterData, i);
                         lfnBuffer.clear();
 
@@ -309,6 +309,7 @@ public class FilesystemParser {
                         long fileDataOffset = clusterRegionStart + (fileCluster - 2) * clusterSize;
                         FileType type = isDir ? FileType.UNKNOWN : FileTypeDetector.detectTypeByNameOrHeader(source, resolvedName, fileDataOffset, fileLength);
 
+                        // Item 2: Store names in DB as proper Java Strings (UTF-16) via constructor
                         RecoveredEntry entry = new RecoveredEntry(resolvedName, currentPath, fileDataOffset, fileLength, type, false, isDir, modTime, rawEntryBytes);
                         entries.add(entry);
                         batch.add(entry);
@@ -490,14 +491,13 @@ public class FilesystemParser {
             }
         }
 
-        // Item 2: Use the LFN as the file's name whenever LFN entries directly precede the short entry.
-        // If checksum does not match, still use the LFN when its sequence numbers are consecutive.
+        // Item 2: Use LFN whenever LFN entries directly precede short entry. If checksum doesn't match, still use LFN when sequence numbers are consecutive.
         if (!checksumValid && !consecutive) {
             return shortNameFormatted;
         }
 
         StringBuilder sb = new StringBuilder();
-        // Item 2: LFN entries stored before the short entry in reverse order. Stop at 0x0000 and skip 0xFFFF padding.
+        // Item 2: LFN entries stored before short entry in reverse order. Stop at 0x0000 and skip 0xFFFF padding.
         for (int i = lfnList.size() - 1; i >= 0; i--) {
             byte[] buf = lfnList.get(i).data;
             // 13 UTF-16LE chars per entry from byte offsets 1-10, 14-25 and 28-31

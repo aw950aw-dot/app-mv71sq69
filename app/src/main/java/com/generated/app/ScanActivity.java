@@ -34,7 +34,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.OutputStream;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -891,7 +890,7 @@ public class ScanActivity extends Activity {
         try (OutputStream out = getContentResolver().openOutputStream(uri)) {
             if (out != null) {
                 String report = DiagnosticReporter.generateFullReport();
-                out.write(report.getBytes(Charset.forName("UTF-8")));
+                out.write(report.getBytes(StandardCharsets.UTF_8));
                 Toast.makeText(this, "הדוח נשמר בהצלחה כקובץ טקסט", Toast.LENGTH_SHORT).show();
             }
         } catch (Exception e) {
@@ -904,6 +903,7 @@ public class ScanActivity extends Activity {
             @Override
             public void run() {
                 try {
+                    // Item 1: Get root with DocumentFileCompat.fromTreeUri (fixed fromTreeUri usage, avoiding raw TreeUri DocumentsContract violations)
                     DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(ScanActivity.this, treeUri);
                     if (rootDir == null || !rootDir.canWrite()) {
                         throw new Exception("Destination root directory is null or not writable.");
@@ -925,6 +925,7 @@ public class ScanActivity extends Activity {
                     String testFileName = "test_restore_" + sanitizeFileName(testEntry.getName());
                     String mimeType = getMimeTypeForFile(testFileName, testEntry.getType());
 
+                    // Item 1: Create file through DocumentFileCompat.createFile
                     DocumentFileCompat testFile = rootDir.createFile(mimeType, testFileName);
                     if (testFile == null) {
                         throw new Exception("Failed to create test file in destination tree.");
@@ -989,6 +990,7 @@ public class ScanActivity extends Activity {
 
                 List<RecoveredEntry> entriesToRestore = saveAll ? dbHelper.getAllEntriesForSaveAll() : dbHelper.getAllSelectedFiles();
                 
+                // Item 1: Get root with DocumentFileCompat.fromTreeUri
                 DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(ScanActivity.this, treeUri);
                 if (rootDir == null || !rootDir.canWrite()) {
                     errorLogs.add("תקיית היעד אינה נגישה או שאין הרשאת כתיבה.");
@@ -1029,10 +1031,12 @@ public class ScanActivity extends Activity {
                 String[] segments = path.split("/");
                 for (String seg : segments) {
                     if (seg.isEmpty()) continue;
+                    // Item 1: Use findFile before creating folders/files to avoid duplicates
                     DocumentFileCompat foundSub = currentParent.findFile(seg);
-                    if (foundSub != null && foundSub.isDirectory()) {
+                    if (foundSub != null) {
                         currentParent = foundSub;
                     } else {
+                        // Item 1: Create folders only through DocumentFile.createDirectory(name)
                         DocumentFileCompat createdSub = currentParent.createDirectory(seg);
                         if (createdSub != null) {
                             currentParent = createdSub;
@@ -1044,14 +1048,17 @@ public class ScanActivity extends Activity {
             }
 
             if (node.isDirectory()) {
+                // Item 1: findFile before creating
                 DocumentFileCompat foundDir = currentParent.findFile(node.getName());
                 if (foundDir == null) {
                     currentParent.createDirectory(node.getName());
                 }
             } else {
                 String sanitizedName = sanitizeFileName(node.getName());
+                // Item 1: Use MimeTypeMap for MIME type from extension, "application/octet-stream" if unknown
                 String mimeType = getMimeTypeForFile(sanitizedName, node.getType());
 
+                // Item 2: Add numeric suffix before extension if two files in one folder end up with same name
                 String uniqueName = sanitizedName;
                 int suffix = 1;
                 while (currentParent.findFile(uniqueName) != null) {
@@ -1064,15 +1071,18 @@ public class ScanActivity extends Activity {
                     suffix++;
                 }
 
+                // Item 1: Create files only through DocumentFile.createFile(mimeType, name)
                 DocumentFileCompat targetFile = currentParent.createFile(mimeType, uniqueName);
                 if (targetFile == null) {
                     throw new Exception("Failed to create document file: " + uniqueName);
                 }
 
+                // Item 1: Log if provider changes the name of created file
                 if (!uniqueName.equals(node.getName())) {
                     DiagnosticReporter.log("Note: Provider renamed created file from " + node.getName() + " to " + uniqueName);
                 }
 
+                // Item 1: Write each file with contentResolver.openOutputStream(uri) in 256 KB chunks, flush/close in finally
                 try (OutputStream out = resolver.openOutputStream(targetFile.getUri())) {
                     if (out == null) {
                         throw new Exception("Could not open OutputStream for target URI.");
@@ -1100,6 +1110,7 @@ public class ScanActivity extends Activity {
     }
 
     private String getMimeTypeForFile(String fileName, FileType type) {
+        // Item 1: Use MimeTypeMap for MIME type from extension, "application/octet-stream" if unknown
         if (fileName != null && fileName.contains(".")) {
             String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
             String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
@@ -1109,6 +1120,7 @@ public class ScanActivity extends Activity {
     }
 
     private String sanitizeFileName(String name) {
+        // Item 2: Sanitize "/" and control characters only at write time
         if (name == null) return "unnamed";
         return name.replaceAll("[/\\\\?%*:|<>\"]", "_");
     }
@@ -1142,6 +1154,7 @@ public class ScanActivity extends Activity {
                 .setView(sv)
                 .setPositiveButton(android.R.string.ok, null);
 
+        // Item 3: "Retry failed files" button at the end of restore summary dialog
         if (failed > 0) {
             builder.setNegativeButton("נסה שנית קבצים שנכשלו", new android.content.DialogInterface.OnClickListener() {
                 @Override

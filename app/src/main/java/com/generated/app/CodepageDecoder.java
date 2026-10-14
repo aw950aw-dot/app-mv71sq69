@@ -46,7 +46,6 @@ public class CodepageDecoder {
         rawNameStr = rawNameStr.trim();
         if (rawNameStr.isEmpty()) return "";
         
-        // Item 2: Join short name as NAME + "." + EXT, omit dot only when extension is empty
         String namePart = "";
         String extPart = "";
         if (rawNameStr.length() > 8) {

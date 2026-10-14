@@ -9,12 +9,10 @@ import android.content.ContentResolver;
 public class DocumentFileCompat {
     private final Context context;
     private final Uri uri;
-    private final boolean isRoot;
 
-    private DocumentFileCompat(Context context, Uri uri, boolean isRoot) {
+    private DocumentFileCompat(Context context, Uri uri) {
         this.context = context;
         this.uri = uri;
-        this.isRoot = isRoot;
     }
 
     public static DocumentFileCompat fromTreeUri(Context context, Uri treeUri) {
@@ -26,7 +24,7 @@ public class DocumentFileCompat {
             String docId = DocumentsContract.getTreeDocumentId(treeUri);
             docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
         }
-        return new DocumentFileCompat(context, docUri, false);
+        return new DocumentFileCompat(context, docUri);
     }
 
     public Uri getUri() {
@@ -35,7 +33,6 @@ public class DocumentFileCompat {
 
     public boolean canWrite() {
         try {
-            String mode = null;
             ContentResolver resolver = context.getContentResolver();
             try (Cursor c = resolver.query(uri, new String[]{DocumentsContract.Document.COLUMN_FLAGS}, null, null, null)) {
                 if (c != null && c.moveToFirst()) {
@@ -49,23 +46,15 @@ public class DocumentFileCompat {
         return true;
     }
 
-    public boolean isDirectory() {
-        try {
-            ContentResolver resolver = context.getContentResolver();
-            try (Cursor c = resolver.query(uri, new String[]{DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null)) {
-                if (c != null && c.moveToFirst()) {
-                    String mime = c.getString(0);
-                    return DocumentsContract.Document.MIME_TYPE_DIR.equals(mime);
-                }
-            }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
     public DocumentFileCompat findFile(String displayName) {
         if (displayName == null) return null;
         ContentResolver resolver = context.getContentResolver();
-        Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, DocumentsContract.getDocumentId(uri));
+        Uri childrenUri;
+        try {
+            childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, DocumentsContract.getDocumentId(uri));
+        } catch (Exception e) {
+            return null;
+        }
         try (Cursor c = resolver.query(childrenUri, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
             if (c != null) {
                 while (c.moveToNext()) {
@@ -73,7 +62,7 @@ public class DocumentFileCompat {
                     String name = c.getString(1);
                     if (displayName.equals(name)) {
                         Uri childUri = DocumentsContract.buildDocumentUriUsingTree(uri, docId);
-                        return new DocumentFileCompat(context, childUri, false);
+                        return new DocumentFileCompat(context, childUri);
                     }
                 }
             }
@@ -86,7 +75,7 @@ public class DocumentFileCompat {
             ContentResolver resolver = context.getContentResolver();
             Uri created = DocumentsContract.createDocument(resolver, uri, DocumentsContract.Document.MIME_TYPE_DIR, displayName);
             if (created != null) {
-                return new DocumentFileCompat(context, created, false);
+                return new DocumentFileCompat(context, created);
             }
         } catch (Exception ignored) {}
         return null;
@@ -97,7 +86,7 @@ public class DocumentFileCompat {
             ContentResolver resolver = context.getContentResolver();
             Uri created = DocumentsContract.createDocument(resolver, uri, mimeType, displayName);
             if (created != null) {
-                return new DocumentFileCompat(context, created, false);
+                return new DocumentFileCompat(context, created);
             }
         } catch (Exception ignored) {}
         return null;
