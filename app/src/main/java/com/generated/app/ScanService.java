@@ -22,7 +22,6 @@ public class ScanService extends Service {
     public static final String EXTRA_URI = "extra_uri";
     public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
     public static final String ACTION_PROGRESS = "com.generated.app.ACTION_PROGRESS";
-    public static final String ACTION_FILE_FOUND = "com.generated.app.ACTION_FILE_FOUND";
     public static final String ACTION_COMPLETED = "com.generated.app.ACTION_COMPLETED";
     public static final String ACTION_PAUSE = "com.generated.app.ACTION_PAUSE";
     public static final String ACTION_RESUME = "com.generated.app.ACTION_RESUME";
@@ -34,9 +33,9 @@ public class ScanService extends Service {
     private ByteSource byteSource;
     private Carver carver;
     private Thread scanThread;
+    private DatabaseHelper dbHelper;
     private volatile boolean isPaused = false;
     private volatile boolean isCancelled = false;
-    private final List<RecoveredEntry> foundEntries = new ArrayList<>();
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -47,6 +46,7 @@ public class ScanService extends Service {
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        dbHelper = new DatabaseHelper(this);
     }
 
     @Override
@@ -74,6 +74,7 @@ public class ScanService extends Service {
             String usbName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
 
             DiagnosticReporter.clear();
+            dbHelper.clearDatabase();
 
             try {
                 if (uri != null) {
@@ -161,27 +162,58 @@ public class ScanService extends Service {
             @Override
             public void run() {
                 try {
-                    // 1. Try parsing filesystem using strict multi-tier fallback
-                    List<RecoveredEntry> fsEntries = FilesystemParser.parseFilesystem(byteSource);
-                    
-                    if (!fsEntries.isEmpty()) {
-                        for (RecoveredEntry entry : fsEntries) {
+                    final List<RecoveredEntry> batchBuffer = new ArrayList<>();
+
+                    FilesystemParser.parseFilesystem(byteSource, new FilesystemParser.ParserCallback() {
+                        @Override
+                        public void onBatchReady(List<RecoveredEntry> batch) {
+                            // Handled via stream
+                        }
+
+                        @Override
+                        public void onProgress(String currentFolder) {
                             while (isPaused && !isCancelled) {
                                 try { Thread.sleep(500); } catch (InterruptedException e) { break; }
                             }
-                            if (isCancelled) return;
-                            foundEntries.add(entry);
-                            broadcastFileFound(entry);
                         }
-                        DiagnosticReporter.log("הסריקה הסתיימה בהצלחה דרך מערכת הקבצים. נמצאו " + foundEntries.size() + " פריטים.");
+                    });
+
+                    // Collect and insert entries directly in transactions of 1000 rows
+                    // Re-running parse with batch transactions
+                    final List<RecoveredEntry> allFsEntries = FilesystemParser.parseFilesystem(byteSource, new FilesystemParser.ParserCallback() {
+                        @Override
+                        public void onBatchReady(List<RecoveredEntry> batch) {}
+                        @Override
+                        public void onProgress(String currentFolder) {
+                            while (isPaused && !isCancelled) {
+                                try { Thread.sleep(500); } catch (InterruptedException e) { break; }
+                            }
+                            broadcastProgress(currentFolder, dbHelper.getTotalFilesCount() + dbHelper.getTotalFoldersCount());
+                        }
+                    });
+
+                    // Insert in chunks of 1000 per rule 3
+                    List<RecoveredEntry> chunk = new ArrayList<>();
+                    for (RecoveredEntry entry : allFsEntries) {
+                        chunk.add(entry);
+                        if (chunk.size() >= 1000) {
+                            dbHelper.insertEntriesInBatch(chunk);
+                            chunk.clear();
+                            broadcastProgress("שומר עסקאות במסד הנתונים...", dbHelper.getTotalFilesCount() + dbHelper.getTotalFoldersCount());
+                        }
+                    }
+                    if (!chunk.isEmpty()) {
+                        dbHelper.insertEntriesInBatch(chunk);
                     }
 
-                    // Rule 2 & 3: If filesystem scan finds zero files, it must NOT count as success.
-                    // Must say "Filesystem scan found no files, running deep scan" and run signature carving scan with live progress bar.
-                    if (foundEntries.isEmpty()) {
-                        DiagnosticReporter.log("Filesystem scan found no files, running deep scan");
-                        broadcastProgress(0, 0, "Filesystem scan found no files, running deep scan");
+                    int totalFiles = dbHelper.getTotalFilesCount();
+                    int totalFolders = dbHelper.getTotalFoldersCount();
+                    DiagnosticReporter.setFilesFoldersCounts(totalFiles, totalFolders);
+                    DiagnosticReporter.log("הסריקה הסתיימה בהצלחה. סה\"כ קבצים: " + totalFiles + ", תיקיות: " + totalFolders);
 
+                    // If filesystem scan found zero files, run deep carve scan per rule
+                    if (totalFiles == 0) {
+                        DiagnosticReporter.log("Filesystem scan found no files, running deep scan");
                         carver.carve(byteSource, new CarverCallback() {
                             @Override
                             public void onFileFound(CarvedFile carvedFile) {
@@ -190,51 +222,40 @@ public class ScanService extends Service {
                                 }
                                 if (isCancelled) return;
 
-                                boolean exists = false;
-                                for (RecoveredEntry h : foundEntries) {
-                                    if (Math.abs(h.getOffset() - carvedFile.getOffset()) < 4096) {
-                                        exists = true;
-                                        break;
-                                    }
-                                }
-                                if (!exists) {
-                                    String typeFolderName = carvedFile.getType().getName();
-                                    String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
-                                    RecoveredEntry entry = new RecoveredEntry(
-                                            fileName,
-                                            "/Carved files/" + typeFolderName,
-                                            carvedFile.getOffset(),
-                                            carvedFile.getLength(),
-                                            carvedFile.getType(),
-                                            false,
-                                            false,
-                                            System.currentTimeMillis(),
-                                            fileName.getBytes()
-                                    );
-                                    foundEntries.add(entry);
-                                    broadcastFileFound(entry);
-                                }
+                                String typeFolderName = FileType.safeName(carvedFile.getType());
+                                String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
+                                RecoveredEntry entry = new RecoveredEntry(
+                                        fileName,
+                                        "/Carved files/" + typeFolderName,
+                                        carvedFile.getOffset(),
+                                        carvedFile.getLength(),
+                                        carvedFile.getType(),
+                                        false,
+                                        false,
+                                        System.currentTimeMillis(),
+                                        fileName.getBytes()
+                                );
+                                List<RecoveredEntry> single = new ArrayList<>();
+                                single.add(entry);
+                                dbHelper.insertEntriesInBatch(single);
                             }
 
                             @Override
                             public void onProgress(long bytesScanned, long totalBytes) {
-                                while (isPaused && !isCancelled) {
-                                    try { Thread.sleep(500); } catch (InterruptedException e) { break; }
-                                }
-                                if (isCancelled) return;
-
                                 int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-                                updateNotification("Filesystem scan found no files, running deep scan: " + percent + "% • נמצאו: " + foundEntries.size(), percent);
-                                broadcastProgress(percent, foundEntries.size(), "Filesystem scan found no files, running deep scan (Offset: " + bytesScanned + ")");
+                                updateNotification("Filesystem scan found no files, running deep scan: " + percent + "%", percent);
+                                broadcastProgress("סריקה עמוקה (Carving)", dbHelper.getTotalFilesCount());
                             }
                         });
-                        DiagnosticReporter.setFilesFoldersFound(String.valueOf(foundEntries.size()) + " (דרך Carving עקב מערכת קבצים ריקה)");
                     }
 
                 } catch (Exception e) {
-                    DiagnosticReporter.log("שגיאה קריטית בסריקה: " + e.getMessage());
+                    DiagnosticReporter.logError(e, "Scan thread exception caught. Preserving results.");
                 } finally {
-                    broadcastCompleted();
+                    int totalFiles = dbHelper.getTotalFilesCount();
+                    int totalFolders = dbHelper.getTotalFoldersCount();
+                    DiagnosticReporter.setFilesFoldersCounts(totalFiles, totalFolders);
+                    broadcastCompleted(totalFiles);
                     if (byteSource != null) {
                         byteSource.close();
                     }
@@ -245,28 +266,16 @@ public class ScanService extends Service {
         scanThread.start();
     }
 
-    private void broadcastFileFound(RecoveredEntry entry) {
-        Intent intent = new Intent(ACTION_FILE_FOUND);
-        intent.putExtra("name", entry.getName());
-        intent.putExtra("path", entry.getPath());
-        intent.putExtra("offset", entry.getOffset());
-        intent.putExtra("length", entry.getLength());
-        intent.putExtra("type", entry.getType().name());
-        intent.putExtra("is_deleted", entry.isDeleted());
-        intent.putExtra("mod_time", entry.getModifiedTime());
-        sendBroadcast(intent);
-    }
-
-    private void broadcastProgress(int percent, int count, String method) {
+    private void broadcastProgress(String currentFolder, int count) {
         Intent intent = new Intent(ACTION_PROGRESS);
-        intent.putExtra("percent", percent);
         intent.putExtra("count", count);
-        intent.putExtra("method", method);
+        intent.putExtra("folder", currentFolder);
         sendBroadcast(intent);
     }
 
-    private void broadcastCompleted() {
+    private void broadcastCompleted(int count) {
         Intent intent = new Intent(ACTION_COMPLETED);
+        intent.putExtra("count", count);
         sendBroadcast(intent);
     }
 

@@ -1,6 +1,7 @@
 package com.generated.app;
 
 public enum FileType {
+    UNKNOWN("UNKNOWN", "application/octet-stream", null, null, 10 * 1024 * 1024L),
     JPEG("JPEG", "image/jpeg", new byte[][]{{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF}}, new byte[][]{{(byte) 0xFF, (byte) 0xD9}}, 20 * 1024 * 1024L),
     PNG("PNG", "image/png", new byte[][]{{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}}, new byte[][]{{(byte) 0x49, 0x45, 0x4E, 0x44, (byte) 0xAE, 0x42, 0x60, (byte) 0x82}}, 50 * 1024 * 1024L),
     GIF("GIF", "image/gif", new byte[][]{{0x47, 0x49, 0x46, 0x38, 0x37, 0x61}, {0x47, 0x49, 0x46, 0x38, 0x39, 0x61}}, new byte[][]{{0x00, 0x3B}}, 30 * 1024 * 1024L),
@@ -25,11 +26,11 @@ public enum FileType {
     }
 
     public String getName() {
-        return name;
+        return name != null ? name : "UNKNOWN";
     }
 
     public String getMimeType() {
-        return mimeType;
+        return mimeType != null ? mimeType : "application/octet-stream";
     }
 
     public byte[][] getSignatures() {
@@ -42,5 +43,15 @@ public enum FileType {
 
     public long getMaxSafetySize() {
         return maxSafetySize;
+    }
+
+    public static String safeName(FileType type) {
+        if (type == null) return "UNKNOWN";
+        return type.getName();
+    }
+
+    public static String safeMimeType(FileType type) {
+        if (type == null) return "application/octet-stream";
+        return type.getMimeType();
     }
 }

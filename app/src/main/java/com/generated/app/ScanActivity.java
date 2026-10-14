@@ -47,6 +47,7 @@ public class ScanActivity extends Activity {
     private Uri sourceUri;
     private String usbDeviceName;
     private ByteSource byteSource;
+    private DatabaseHelper dbHelper;
 
     private TextView tvStatus;
     private TextView tvMethodUsed;
@@ -63,15 +64,12 @@ public class ScanActivity extends Activity {
     private Button btnSaveSelected;
     private Button btnErrorLog;
 
-    private final List<RecoveredEntry> allFlatEntries = new ArrayList<>();
-    private RecoveredEntry rootNode;
-    private RecoveredEntry currentDirectory;
+    private String currentDirPath = "/";
+    private List<RecoveredEntry> currentDirEntries = new ArrayList<>();
     private TreeEntryAdapter adapter;
 
     private boolean isPaused = false;
     private String lastReportMethod = "מנתח מערכת קבצים...";
-    private int carvedCount = 0;
-    private int fsFoundCount = 0;
     private boolean isDeepScanning = false;
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
@@ -81,47 +79,23 @@ public class ScanActivity extends Activity {
             String action = intent.getAction();
 
             if (ScanService.ACTION_PROGRESS.equals(action)) {
-                int percent = intent.getIntExtra("percent", 0);
                 int count = intent.getIntExtra("count", 0);
-                progressBar.setProgress(percent * 10);
-                tvStatus.setText("סורק קבצים... (" + percent + "%) • נמצאו: " + count);
-                String method = intent.getStringExtra("method");
-                if (method != null && !method.isEmpty()) {
-                    lastReportMethod = method;
-                    tvMethodUsed.setText("שיטת שחזור: " + method);
+                String folder = intent.getStringExtra("folder");
+                if (folder != null) {
+                    tvStatus.setText("סורק תיקייה: " + folder + " • נמצאו: " + count);
+                } else {
+                    tvStatus.setText("סורק קבצים... • נמצאו: " + count);
                 }
                 updateSummaryBox();
-            } else if (ScanService.ACTION_FILE_FOUND.equals(action)) {
-                String name = intent.getStringExtra("name");
-                String path = intent.getStringExtra("path");
-                long offset = intent.getLongExtra("offset", 0);
-                long length = intent.getLongExtra("length", 0);
-                String typeStr = intent.getStringExtra("type");
-                boolean isDeleted = intent.getBooleanExtra("is_deleted", false);
-                long modTime = intent.getLongExtra("mod_time", System.currentTimeMillis());
-
-                FileType type = FileType.JPEG;
-                try { type = FileType.valueOf(typeStr); } catch (Exception ignored) {}
-
-                RecoveredEntry entry = new RecoveredEntry(name, path, offset, length, type, isDeleted, false, modTime, name.getBytes());
-                allFlatEntries.add(entry);
-                if (path != null && path.contains("Carved")) {
-                    carvedCount++;
-                } else {
-                    fsFoundCount++;
-                }
-                refreshTreeOnMainThread();
+                reloadCurrentDirectoryFromDb();
             } else if (ScanService.ACTION_COMPLETED.equals(action)) {
-                if (allFlatEntries.isEmpty()) {
-                    tvStatus.setText("Filesystem scan found no files, running deep scan");
-                } else {
-                    tvStatus.setText(R.string.scan_completed);
-                }
+                int count = intent.getIntExtra("count", 0);
+                tvStatus.setText("הסריקה הסתיימה. נמצאו " + count + " פריטים.");
                 btnCancel.setText(android.R.string.ok);
                 btnPauseResume.setVisibility(View.GONE);
                 tvMethodUsed.setText("שיטת שחזור: הושלם (" + FilesystemParser.getRecoveryMethodUsed() + ")");
                 updateSummaryBox();
-                refreshTreeOnMainThread();
+                reloadCurrentDirectoryFromDb();
             }
         }
     };
@@ -131,6 +105,7 @@ public class ScanActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
+        dbHelper = new DatabaseHelper(this);
         sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
         usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
 
@@ -216,7 +191,6 @@ public class ScanActivity extends Activity {
         topCard.addView(tvSummaryBox, summaryParams);
         updateSummaryBox();
 
-        // Item 1: Buttons row for Copy report, Save report, and Deep Scan button
         LinearLayout reportButtonsLayout = new LinearLayout(this);
         reportButtonsLayout.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams rbParams = new LinearLayout.LayoutParams(
@@ -251,7 +225,6 @@ public class ScanActivity extends Activity {
         btnDeepScanNow.setBackgroundColor(0xFF6A1B9A);
         reportButtonsLayout.addView(btnDeepScanNow, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-        // Item 1: Safe Copy Report implementation with try/catch, MainLooper, and max 100 KB limit enforced in DiagnosticReporter
         btnCopyReport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -278,7 +251,6 @@ public class ScanActivity extends Activity {
             }
         });
 
-        // Item 1: Save report via ACTION_CREATE_DOCUMENT
         btnSaveReport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -294,7 +266,6 @@ public class ScanActivity extends Activity {
             }
         });
 
-        // Item 4: Independent "סריקה עמוקה" (Deep Scan) button implementation
         btnDeepScanNow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -319,7 +290,8 @@ public class ScanActivity extends Activity {
         topCard.addView(tvBreadcrumb, bcParams);
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setMax(1000);
+        progressBar.setMax(100);
+        progressBar.setIndeterminate(true);
         LinearLayout.LayoutParams pbParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 (int) (8 * getResources().getDisplayMetrics().density)
@@ -385,9 +357,9 @@ public class ScanActivity extends Activity {
             public void onItemClick(android.widget.AdapterView<?> parent, View view, int position, long id) {
                 RecoveredEntry clicked = (RecoveredEntry) adapter.getItem(position);
                 if (clicked != null && clicked.isDirectory()) {
-                    currentDirectory = clicked;
+                    currentDirPath = currentDirPath.equals("/") ? "/" + clicked.getName() : currentDirPath + "/" + clicked.getName();
                     updateBreadcrumb();
-                    adapter.notifyDataSetChanged();
+                    reloadCurrentDirectoryFromDb();
                 }
             }
         });
@@ -464,6 +436,7 @@ public class ScanActivity extends Activity {
         });
 
         setContentView(root);
+        reloadCurrentDirectoryFromDb();
     }
 
     private void runManualDeepScan() {
@@ -484,32 +457,23 @@ public class ScanActivity extends Activity {
                     carver.carve(byteSource, new CarverCallback() {
                         @Override
                         public void onFileFound(final CarvedFile carvedFile) {
-                            boolean exists = false;
-                            for (RecoveredEntry h : allFlatEntries) {
-                                if (Math.abs(h.getOffset() - carvedFile.getOffset()) < 4096) {
-                                    exists = true;
-                                    break;
-                                }
-                            }
-                            if (!exists) {
-                                String typeFolderName = carvedFile.getType().getName();
-                                String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
-                                // Item 4: shows results under a "Carved files" group
-                                final RecoveredEntry entry = new RecoveredEntry(
-                                        fileName,
-                                        "/Carved files/" + typeFolderName,
-                                        carvedFile.getOffset(),
-                                        carvedFile.getLength(),
-                                        carvedFile.getType(),
-                                        false,
-                                        false,
-                                        System.currentTimeMillis(),
-                                        fileName.getBytes()
-                                );
-                                allFlatEntries.add(entry);
-                                carvedCount++;
-                                refreshTreeOnMainThread();
-                            }
+                            String typeFolderName = FileType.safeName(carvedFile.getType());
+                            String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
+                            RecoveredEntry entry = new RecoveredEntry(
+                                    fileName,
+                                    "/Carved files/" + typeFolderName,
+                                    carvedFile.getOffset(),
+                                    carvedFile.getLength(),
+                                    carvedFile.getType(),
+                                    false,
+                                    false,
+                                    System.currentTimeMillis(),
+                                    fileName.getBytes()
+                            );
+                            List<RecoveredEntry> single = new ArrayList<>();
+                            single.add(entry);
+                            dbHelper.insertEntriesInBatch(single);
+                            reloadCurrentDirectoryFromDb();
                         }
 
                         @Override
@@ -518,8 +482,7 @@ public class ScanActivity extends Activity {
                             new Handler(Looper.getMainLooper()).post(new Runnable() {
                                 @Override
                                 public void run() {
-                                    progressBar.setProgress(percent * 10);
-                                    tvStatus.setText("סריקה עמוקה... (" + percent + "%) • נמצאו: " + allFlatEntries.size());
+                                    tvStatus.setText("סריקה עמוקה... (" + percent + "%)");
                                 }
                             });
                         }
@@ -530,7 +493,7 @@ public class ScanActivity extends Activity {
                         public void run() {
                             isDeepScanning = false;
                             tvStatus.setText("הסריקה העמוקה הסתיימה בהצלחה");
-                            Toast.makeText(ScanActivity.this, "הסריקה העמוקה הסתיימה", Toast.LENGTH_LONG).show();
+                            reloadCurrentDirectoryFromDb();
                         }
                     });
                 } catch (Exception e) {
@@ -547,31 +510,23 @@ public class ScanActivity extends Activity {
     }
 
     private void updateSummaryBox() {
+        int files = dbHelper.getTotalFilesCount();
+        int folders = dbHelper.getTotalFoldersCount();
         StringBuilder sb = new StringBuilder();
         sb.append("סיכום סריקה:\n");
-        sb.append("• שיטה בשימוש: ").append(lastReportMethod).append("\n");
-        sb.append("• מערכת קבצים זוהתה: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n");
-        sb.append("• קבצים ותיקיות במערכת קבצים: ").append(fsFoundCount).append("\n");
-        sb.append("• קבצים שחולצו (Carved): ").append(carvedCount);
+        sb.append("• מערכת קבצים: ").append(FilesystemParser.getRecoveryMethodUsed()).append("\n");
+        sb.append("• סך קבצים: ").append(files).append("\n");
+        sb.append("• סך תיקיות: ").append(folders);
         if (tvSummaryBox != null) {
             tvSummaryBox.setText(sb.toString());
         }
     }
 
-    private void refreshTreeOnMainThread() {
+    private void reloadCurrentDirectoryFromDb() {
         new Handler(Looper.getMainLooper()).post(new Runnable() {
             @Override
             public void run() {
-                List<RecoveredEntry> roots = FilesystemParser.buildTree(allFlatEntries);
-                if (!roots.isEmpty()) {
-                    rootNode = roots.get(0);
-                    if (currentDirectory == null || currentDirectory == rootNode) {
-                        currentDirectory = rootNode;
-                    } else {
-                        currentDirectory = findDirectoryByPath(rootNode, currentDirectory.getName());
-                        if (currentDirectory == null) currentDirectory = rootNode;
-                    }
-                }
+                currentDirEntries = dbHelper.getChildrenOfDirectory(currentDirPath);
                 updateBreadcrumb();
                 updateSummaryBox();
                 adapter.notifyDataSetChanged();
@@ -579,41 +534,29 @@ public class ScanActivity extends Activity {
         });
     }
 
-    private RecoveredEntry findDirectoryByPath(RecoveredEntry node, String name) {
-        if (node.getName().equals(name)) return node;
-        for (RecoveredEntry child : node.getChildren()) {
-            if (child.isDirectory()) {
-                if (child.getName().equals(name)) return child;
-                RecoveredEntry found = findDirectoryByPath(child, name);
-                if (found != null) return found;
-            }
-        }
-        return null;
-    }
-
     private void updateBreadcrumb() {
-        if (currentDirectory == null) {
-            tvBreadcrumb.setText("מיקום: /");
-        } else {
-            tvBreadcrumb.setText("מיקום: " + (currentDirectory.getName().isEmpty() ? "/" : "/" + currentDirectory.getName()));
+        if (tvBreadcrumb != null) {
+            tvBreadcrumb.setText("מיקום: " + currentDirPath);
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (currentDirectory != null && currentDirectory.getParent() != null) {
-            currentDirectory = currentDirectory.getParent();
+        if (!currentDirPath.equals("/")) {
+            int lastSlash = currentDirPath.lastIndexOf('/');
+            if (lastSlash <= 0) {
+                currentDirPath = "/";
+            } else {
+                currentDirPath = currentDirPath.substring(0, lastSlash);
+            }
             updateBreadcrumb();
-            adapter.notifyDataSetChanged();
+            reloadCurrentDirectoryFromDb();
         } else {
             super.onBackPressed();
         }
     }
 
     private void startScanService() {
-        allFlatEntries.clear();
-        carvedCount = 0;
-        fsFoundCount = 0;
         Intent intent = new Intent(this, ScanService.class);
         if (sourceUri != null) {
             intent.putExtra(ScanService.EXTRA_URI, sourceUri);
@@ -628,7 +571,6 @@ public class ScanActivity extends Activity {
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(ScanService.ACTION_PROGRESS);
-        filter.addAction(ScanService.ACTION_FILE_FOUND);
         filter.addAction(ScanService.ACTION_COMPLETED);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
@@ -706,8 +648,10 @@ public class ScanActivity extends Activity {
                 final List<String> errorLogs = new ArrayList<>();
                 int[] successCount = new int[]{0};
 
-                if (rootNode != null) {
-                    saveNodeToTree(resolver, treeUri, rootNode, saveAll, successCount, errorLogs);
+                // Stream entries from DB for saving
+                List<RecoveredEntry> allEntries = dbHelper.getChildrenOfDirectory("/");
+                for (RecoveredEntry entry : allEntries) {
+                    saveNodeToTree(resolver, treeUri, entry, saveAll, successCount, errorLogs);
                 }
 
                 final int finalSuccess = successCount[0];
@@ -727,7 +671,7 @@ public class ScanActivity extends Activity {
     }
 
     private void saveNodeToTree(ContentResolver resolver, Uri parentDirUri, RecoveredEntry node, boolean saveAll, int[] successCount, List<String> errorLogs) {
-        if (!saveAll && !node.isSelected() && !hasSelectedDescendant(node)) return;
+        if (!saveAll && !node.isSelected()) return;
 
         if (node.isDirectory()) {
             Uri currentFolderUri = parentDirUri;
@@ -741,46 +685,37 @@ public class ScanActivity extends Activity {
                 }
             }
             if (currentFolderUri != null) {
-                for (RecoveredEntry child : node.getChildren()) {
+                List<RecoveredEntry> subEntries = dbHelper.getChildrenOfDirectory(node.getPath().equals("/") ? "/" + node.getName() : node.getPath() + "/" + node.getName());
+                for (RecoveredEntry child : subEntries) {
                     saveNodeToTree(resolver, currentFolderUri, child, saveAll, successCount, errorLogs);
                 }
             }
         } else {
-            if (saveAll || node.isSelected()) {
-                try {
-                    String sanitizedName = sanitizeFileName(node.getName());
-                    Uri docUri = DocumentsContract.createDocument(resolver, parentDirUri, node.getType().getMimeType(), sanitizedName);
-                    if (docUri != null) {
-                        try (OutputStream out = resolver.openOutputStream(docUri)) {
-                            if (out != null) {
-                                long remaining = node.getLength();
-                                long offset = node.getOffset();
-                                byte[] buf = new byte[32768];
-                                while (remaining > 0) {
-                                    int toRead = (int) Math.min(buf.length, remaining);
-                                    int read = byteSource.readAt(offset, buf, toRead);
-                                    if (read <= 0) break;
-                                    out.write(buf, 0, read);
-                                    offset += read;
-                                    remaining -= read;
-                                }
-                                successCount[0]++;
+            try {
+                String sanitizedName = sanitizeFileName(node.getName());
+                Uri docUri = DocumentsContract.createDocument(resolver, parentDirUri, FileType.safeMimeType(node.getType()), sanitizedName);
+                if (docUri != null) {
+                    try (OutputStream out = resolver.openOutputStream(docUri)) {
+                        if (out != null) {
+                            long remaining = node.getLength();
+                            long offset = node.getOffset();
+                            byte[] buf = new byte[32768];
+                            while (remaining > 0) {
+                                int toRead = (int) Math.min(buf.length, remaining);
+                                int read = byteSource.readAt(offset, buf, toRead);
+                                if (read <= 0) break;
+                                out.write(buf, 0, read);
+                                offset += read;
+                                remaining -= read;
                             }
+                            successCount[0]++;
                         }
                     }
-                } catch (Exception e) {
-                    errorLogs.add("שגיאת שחזור קובץ " + node.getName() + ": " + e.getMessage());
                 }
+            } catch (Exception e) {
+                errorLogs.add("שגיאת שחזור קובץ " + node.getName() + ": " + e.getMessage());
             }
         }
-    }
-
-    private boolean hasSelectedDescendant(RecoveredEntry node) {
-        if (node.isSelected()) return true;
-        for (RecoveredEntry child : node.getChildren()) {
-            if (hasSelectedDescendant(child)) return true;
-        }
-        return false;
     }
 
     private String sanitizeFileName(String name) {
@@ -791,14 +726,12 @@ public class ScanActivity extends Activity {
     private class TreeEntryAdapter extends BaseAdapter {
         @Override
         public int getCount() {
-            if (currentDirectory == null) return 0;
-            return currentDirectory.getChildren().size();
+            return currentDirEntries.size();
         }
 
         @Override
         public Object getItem(int position) {
-            if (currentDirectory == null) return null;
-            return currentDirectory.getChildren().get(position);
+            return currentDirEntries.get(position);
         }
 
         @Override
@@ -881,7 +814,6 @@ public class ScanActivity extends Activity {
                 public void onClick(View v) {
                     boolean newState = holder.checkBox.isChecked();
                     entry.setSelected(newState);
-                    if (rootNode != null) rootNode.updateSelectionStateFromChildren();
                     notifyDataSetChanged();
                 }
             });
@@ -889,9 +821,7 @@ public class ScanActivity extends Activity {
             if (entry.isDirectory()) {
                 holder.ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
                 holder.tvName.setText("📁 " + entry.getName());
-                int fileCount = entry.getRecursiveFileCount();
-                long totalSize = entry.getRecursiveSize();
-                holder.tvDetails.setText("קבצים: " + fileCount + " • גודל: " + formatSize(totalSize));
+                holder.tvDetails.setText("תיקייה");
                 holder.btnDetails.setVisibility(View.GONE);
             } else {
                 holder.tvName.setText(entry.getName());
@@ -937,7 +867,8 @@ public class ScanActivity extends Activity {
         StringBuilder sb = new StringBuilder();
         sb.append("שם הקובץ: ").append(entry.getName()).append("\n");
         sb.append("אופסט: 0x").append(Long.toHexString(entry.getOffset())).append("\n");
-        sb.append("גודל: ").append(entry.getLength()).append(" בייטס\n\n");
+        sb.append("גודל: ").append(entry.getLength()).append(" בייטס\n");
+        sb.append("סוג: ").append(FileType.safeName(entry.getType())).append("\n\n");
         sb.append("בתים גולמיים של השם (Hex):\n");
         
         byte[] bytes = entry.getRawNameBytes();
