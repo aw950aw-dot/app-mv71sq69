@@ -128,9 +128,7 @@ public class ScanActivity extends Activity {
                     updateSelectionCounter();
                     if (!isSearching) reloadCurrentDirectoryFromDb();
                 }
-            } catch (Exception e) {
-                DiagnosticReporter.logError(e, "Exception in ScanActivity BroadcastReceiver onReceive");
-            }
+            } catch (Exception ignored) {}
         }
     };
 
@@ -154,9 +152,7 @@ public class ScanActivity extends Activity {
                     progressBar.setProgress(100);
                     showRestoreSummaryDialogAfterService(success, failed);
                 }
-            } catch (Exception e) {
-                DiagnosticReporter.logError(e, "Exception in restoreReceiver onReceive");
-            }
+            } catch (Exception ignored) {}
         }
     };
 
@@ -350,6 +346,10 @@ public class ScanActivity extends Activity {
 
                 RecoveredEntry clicked = currentDirEntries.get(actualIndex);
                 if (clicked != null && clicked.isDirectory()) {
+                    if (clicked.isUnreadable()) {
+                        Toast.makeText(ScanActivity.this, "תיקייה זו מסומנת כלא קריאה ולא ניתן לפתוח אותה.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
                     isSearching = false;
                     etSearch.setText("");
                     currentDirPath = currentDirPath.equals("/") ? "/" + clicked.getName() : currentDirPath + "/" + clicked.getName();
@@ -543,9 +543,7 @@ public class ScanActivity extends Activity {
                         clipboard.setPrimaryClip(clip);
                         Toast.makeText(ScanActivity.this, "הדוח המלא הועתק ללוח בהצלחה", Toast.LENGTH_SHORT).show();
                     }
-                } catch (Exception e) {
-                    Toast.makeText(ScanActivity.this, "שגיאה בהעתקת הדוח", Toast.LENGTH_SHORT).show();
-                }
+                } catch (Exception ignored) {}
             }
         });
 
@@ -558,9 +556,7 @@ public class ScanActivity extends Activity {
                 intent.putExtra(Intent.EXTRA_TITLE, "sd_rescue_report.txt");
                 try {
                     startActivityForResult(intent, REQUEST_CODE_SAVE_REPORT);
-                } catch (Exception e) {
-                    Toast.makeText(ScanActivity.this, "שגיאה בפתיחת שומר הקבצים", Toast.LENGTH_SHORT).show();
-                }
+                } catch (Exception ignored) {}
             }
         });
 
@@ -895,9 +891,7 @@ public class ScanActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         try {
             startActivityForResult(intent, REQUEST_CODE_SAVE_DIR);
-        } catch (Exception e) {
-            Toast.makeText(this, R.string.error_saving, Toast.LENGTH_SHORT).show();
-        }
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -932,9 +926,7 @@ public class ScanActivity extends Activity {
                 out.write(report.getBytes(StandardCharsets.UTF_8));
                 Toast.makeText(this, "הדוח נשמר בהצלחה כקובץ טקסט", Toast.LENGTH_SHORT).show();
             }
-        } catch (Exception e) {
-            Toast.makeText(this, "שגיאה בשמירת הדוח לקובץ", Toast.LENGTH_SHORT).show();
-        }
+        } catch (Exception ignored) {}
     }
 
     private void startRestoreService(Uri treeUri, boolean saveAll) {
@@ -978,11 +970,9 @@ public class ScanActivity extends Activity {
                         throw new Exception("No files found in database to perform test restore.");
                     }
 
-                    // Rule 3: Restore one file, then read the destination file back and compare its first 4096 bytes with the card
                     String testFileName = "test_restore_" + sanitizeFileName(testEntry.getName());
                     String mimeType = getMimeTypeForFile(testFileName, testEntry.getType());
 
-                    // Read first chunk from card source before creating destination file
                     int sampleLen = (int) Math.min(testEntry.getLength(), 4096L);
                     byte[] cardBuffer = new byte[sampleLen];
                     int cardRead = byteSource.readAt(testEntry.getOffset(), cardBuffer, sampleLen);
@@ -1002,13 +992,11 @@ public class ScanActivity extends Activity {
                         }
                         long remaining = testEntry.getLength();
                         long offset = testEntry.getOffset();
-                        byte[] buf = new byte[16384]; // at most 16384 bytes per read
+                        byte[] buf = new byte[16384];
                         while (remaining > 0) {
                             int toRead = (int) Math.min(buf.length, remaining);
                             int read = byteSource.readAt(offset, buf, toRead);
-                            if (read <= 0) {
-                                break;
-                            }
+                            if (read <= 0) break;
                             out.write(buf, 0, read);
                             offset += read;
                             remaining -= read;
@@ -1017,7 +1005,6 @@ public class ScanActivity extends Activity {
                         out.flush();
                     }
 
-                    // Read back the destination file and compare first 4096 bytes with card
                     byte[] destBuffer = new byte[sampleLen];
                     try (InputStream in = getContentResolver().openInputStream(testFile.getUri())) {
                         if (in != null) {
@@ -1033,22 +1020,10 @@ public class ScanActivity extends Activity {
                         }
                     }
 
-                    boolean isJpg = testEntry.getType() == FileType.JPEG;
-                    boolean isMp4 = testEntry.getType() == FileType.MP4;
-
                     StringBuilder info = new StringBuilder();
                     info.append("Restored size: ").append(restoredSize).append(" bytes\n");
                     info.append("Expected size: ").append(testEntry.getLength()).append(" bytes\n");
                     info.append("Comparison 4096 bytes: ").append(matches ? "OK" : "NOT OK").append("\n");
-
-                    if (isJpg) {
-                        boolean hasJpgSig = sampleLen >= 3 && (cardBuffer[0] & 0xFF) == 0xFF && (cardBuffer[1] & 0xFF) == 0xD8 && (cardBuffer[2] & 0xFF) == 0xFF;
-                        info.append("JPG signature (FF D8 FF): ").append(hasJpgSig ? "YES" : "NO").append("\n");
-                    }
-                    if (isMp4) {
-                        boolean hasMp4Brand = sampleLen >= 8 && cardBuffer[4] == 'f' && cardBuffer[5] == 't' && cardBuffer[6] == 'y' && cardBuffer[7] == 'p';
-                        info.append("MP4 brand at bytes 4-7 ('ftyp'): ").append(hasMp4Brand ? "YES" : "NO").append("\n");
-                    }
 
                     final String resultMessage = info.toString();
                     new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -1312,12 +1287,21 @@ public class ScanActivity extends Activity {
             });
 
             if (entry.isDirectory()) {
-                holder.ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
-                holder.tvName.setText("📁 " + entry.getName());
-                String folderDesc = String.format(Locale.getDefault(), "%d קבצים • %s", entry.getCachedRecursiveFileCount(), formatSize(entry.getCachedRecursiveSize()));
-                holder.tvDetails.setText(folderDesc);
+                if (entry.isUnreadable()) {
+                    holder.ivIcon.setImageResource(android.R.drawable.ic_delete);
+                    holder.tvName.setText("⚠️ " + entry.getName() + " (לא קריא)");
+                    holder.tvName.setTextColor(0xFF9E9E9E);
+                    holder.tvDetails.setText("תיקייה פגומה או לא קריאה");
+                } else {
+                    holder.ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
+                    holder.tvName.setText("📁 " + entry.getName());
+                    holder.tvName.setTextColor(0xFF333333);
+                    String folderDesc = String.format(Locale.getDefault(), "%d קבצים • %s", entry.getCachedRecursiveFileCount(), formatSize(entry.getCachedRecursiveSize()));
+                    holder.tvDetails.setText(folderDesc);
+                }
                 holder.btnDetails.setVisibility(View.GONE);
             } else {
+                holder.tvName.setTextColor(0xFF333333);
                 if (isSearching) {
                     holder.tvName.setText(entry.getName());
                     holder.tvDetails.setText("נתיב: " + entry.getPath() + " • " + formatSize(entry.getLength()));
@@ -1377,7 +1361,7 @@ public class ScanActivity extends Activity {
         sb.append("אופסט: 0x").append(Long.toHexString(entry.getOffset())).append("\n");
         sb.append("גודל: ").append(entry.getLength()).append(" בייטס\n");
         sb.append("סוג: ").append(FileType.safeName(entry.getType())).append("\n\n");
-        sb.append("רשומות ספריה גולמיות (32 בייטס / Hex):\n");
+        sb.append("רשומות ספריה גולמיות (כולל LFN במידת הצורך) בתצוגת Hex:\n");
         
         byte[] bytes = entry.getRawNameBytes();
         if (bytes != null && bytes.length > 0) {
@@ -1401,7 +1385,7 @@ public class ScanActivity extends Activity {
         sv.addView(tv);
 
         new AlertDialog.Builder(this)
-                .setTitle("פרטי קובץ גולמיים ומתקדמים")
+                .setTitle("פרטי קובץ גולמיים ומתקדמים (Name details)")
                 .setView(sv)
                 .setPositiveButton("העתק פרטים", new android.content.DialogInterface.OnClickListener() {
                     @Override

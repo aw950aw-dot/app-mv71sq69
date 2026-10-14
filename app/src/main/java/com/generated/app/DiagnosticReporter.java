@@ -20,13 +20,17 @@ public class DiagnosticReporter {
     private static String bootSectorFields = "-";
     private static String firstDataSector = "-";
     private static String rootDirLba = "-";
-    private static String rootEntriesCount = "0";
     private static int filesFoundCount = 0;
     private static int foldersFoundCount = 0;
     private static int errorCount = 0;
     private static String skippedEntriesLog = "אין פריטים שדולגו";
     private static String lunUsed = "0";
     private static String rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
+
+    private static int longNameCount = 0;
+    private static int shortNameCount = 0;
+    private static int skippedGarbageCount = 0;
+    private static int unreadableFoldersCount = 0;
 
     public static class FileInfoRecord {
         public final String name;
@@ -49,14 +53,22 @@ public class DiagnosticReporter {
         bootSectorFields = "-";
         firstDataSector = "-";
         rootDirLba = "-";
-        rootEntriesCount = "0";
         filesFoundCount = 0;
         foldersFoundCount = 0;
         errorCount = 0;
         skippedEntriesLog = "אין פריטים שדולגו";
         lunUsed = "0";
         rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
+        longNameCount = 0;
+        shortNameCount = 0;
+        skippedGarbageCount = 0;
+        unreadableFoldersCount = 0;
     }
+
+    public static synchronized void incrementLongName() { longNameCount++; }
+    public static synchronized void incrementShortName() { shortNameCount++; }
+    public static synchronized void incrementSkippedGarbage() { skippedGarbageCount++; }
+    public static synchronized void incrementUnreadableFolder() { unreadableFoldersCount++; }
 
     public static synchronized void log(String msg) {
         logs.add("[" + System.currentTimeMillis() + "] " + msg);
@@ -125,14 +137,6 @@ public class DiagnosticReporter {
         rootDirLba = lba;
     }
 
-    public static synchronized void setRootEntriesCount(String count) {
-        rootEntriesCount = count;
-    }
-
-    public static synchronized void setSkippedEntriesLog(String skipped) {
-        skippedEntriesLog = skipped;
-    }
-
     public static synchronized void setLunUsed(String lun) {
         lunUsed = lun;
     }
@@ -147,17 +151,20 @@ public class DiagnosticReporter {
         sb.append("1. LUN בשימוש: ").append(lunUsed).append("\n");
         sb.append("2. מחיצות (MBR/GPT): \n").append(partitionInfo).append("\n\n");
         sb.append("3. LBA התחלתי נבחר למערכת הקבצים: ").append(chosenStartLba).append("\n");
-        sb.append("4. מידע על מקטע איתחול מגובי (Backup Boot Sector): ").append(backupBootSectorUsed).append("\n");
+        sb.append("4. מידע על מקטע איתחול מגובי: ").append(backupBootSectorUsed).append("\n");
         sb.append("5. סוג מערכת קבצים זוהה: ").append(fsTypeDetected).append("\n\n");
         sb.append("6. שדות מקטע איתחול (Boot Sector):\n").append(bootSectorFields).append("\n\n");
         sb.append("7. סקטור נתונים ראשון מחושב: ").append(firstDataSector).append("\n");
         sb.append("8. LBA של תיקיית השורש (Root Dir): ").append(rootDirLba).append("\n");
-        sb.append("9. מספר רשומות תיקיית שורש שנקראו: ").append(rootEntriesCount).append("\n");
-        sb.append("10. סך קבצים שנמצאו: ").append(filesFoundCount).append("\n");
-        sb.append("11. סך תיקיות שנמצאו: ").append(foldersFoundCount).append("\n");
-        sb.append("12. סך שגיאות שבודדו והופקו: ").append(errorCount).append("\n\n");
+        sb.append("9. סך קבצים שנמצאו: ").append(filesFoundCount).append("\n");
+        sb.append("10. סך תיקיות שנמצאו: ").append(foldersFoundCount).append("\n");
+        sb.append("11. קבצים עם שם ארוך (LFN): ").append(longNameCount).append("\n");
+        sb.append("12. קבצים עם שם קצר (8.3): ").append(shortNameCount).append("\n");
+        sb.append("13. פריטי זבל שדולגו: ").append(skippedGarbageCount).append("\n");
+        sb.append("14. תיקיות לא קריאות: ").append(unreadableFoldersCount).append("\n");
+        sb.append("15. סך שגיאות שבודדו והופקו: ").append(errorCount).append("\n\n");
         
-        sb.append("13. 30 שמות קבצים ותיקיות ראשונים שנמצאו עם גודלם:\n");
+        sb.append("16. 30 שמות קבצים ותיקיות ראשונים שנמצאו עם גודלם:\n");
         if (firstFilesList.isEmpty()) {
             sb.append("(טרם נוספו קבצים לרשימה)\n");
         } else {
@@ -168,7 +175,7 @@ public class DiagnosticReporter {
         }
         sb.append("\n");
 
-        sb.append("14. שגיאות מקובצות לפי סיבה ומופעים (עד 20 דוגמאות לכל סיבה):\n");
+        sb.append("17. שגיאות מקובצות לפי סיבה ומופעים:\n");
         if (errorCountsMap.isEmpty()) {
             sb.append("(אין שגיאות לתצוגה)\n");
         } else {
@@ -176,24 +183,9 @@ public class DiagnosticReporter {
             for (Map.Entry<String, Integer> entry : errorCountsMap.entrySet()) {
                 String cause = entry.getKey();
                 int count = entry.getValue();
-                sb.append("--- שגיאה ").append(errIdx++).append(" (סך הכל מופעים: ").append(count).append(") ---\n");
-                sb.append("סיבה: ").append(cause).append("\n");
-                List<String> examples = errorExamplesMap.get(cause);
-                if (examples != null && !examples.isEmpty()) {
-                    sb.append("דוגמאות ראשונות (עד 20):\n");
-                    for (int ex = 0; ex < examples.size(); ex++) {
-                        sb.append("  [דוגמה ").append(ex + 1).append("]:\n").append(examples.get(ex)).append("\n");
-                    }
-                }
-                sb.append("\n");
+                sb.append("--- שגיאה ").append(errIdx++).append(" (מופעים: ").append(count).append(") ---\n");
+                sb.append("סיבה: ").append(cause).append("\n\n");
             }
-        }
-        sb.append("\n");
-
-        sb.append("15. פריטים שדולגו וסיבת דילוג:\n").append(skippedEntriesLog).append("\n\n");
-        sb.append("16. יומן אירועים כללי:\n");
-        for (String l : logs) {
-            sb.append(l).append("\n");
         }
 
         String result = sb.toString();

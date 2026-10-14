@@ -9,11 +9,12 @@ public class RecoveredEntry {
     private final boolean isDeleted;
     private final boolean isDirectory;
     private final long modifiedTime;
-    private final byte[] rawNameBytes; // 32 bytes directory entry or raw blob
+    private final byte[] rawNameBytes;
     
-    private int selectedState; // 0 = none, 1 = selected, 2 = partial
+    private int selectedState;
     private long cachedRecursiveSize;
     private int cachedRecursiveFileCount;
+    private boolean isUnreadable;
 
     public RecoveredEntry(String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes) {
         this.name = name != null ? name : "unnamed";
@@ -25,7 +26,8 @@ public class RecoveredEntry {
         this.isDirectory = isDirectory;
         this.modifiedTime = modifiedTime;
         this.rawNameBytes = rawNameBytes != null ? rawNameBytes : new byte[0];
-        this.selectedState = 0; // Rule 2: Nothing is selected by default
+        this.selectedState = 0;
+        this.isUnreadable = false;
     }
 
     public String getName() {
@@ -94,5 +96,13 @@ public class RecoveredEntry {
 
     public void setCachedRecursiveFileCount(int count) {
         this.cachedRecursiveFileCount = count;
+    }
+
+    public boolean isUnreadable() {
+        return isUnreadable;
+    }
+
+    public void setUnreadable(boolean unreadable) {
+        isUnreadable = unreadable;
     }
 }
