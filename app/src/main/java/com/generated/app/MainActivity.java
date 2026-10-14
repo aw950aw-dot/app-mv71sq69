@@ -19,6 +19,9 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,6 +41,29 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
+        // 3) Global crash handler setup
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    java.io.StringWriter sw = new java.io.StringWriter();
+                    e.printStackTrace(new java.io.PrintWriter(sw));
+                    String stackTrace = sw.toString();
+
+                    File crashFile = new File(getFilesDir(), "last_crash.txt");
+                    java.io.FileWriter writer = new java.io.FileWriter(crashFile);
+                    writer.write(stackTrace);
+                    writer.close();
+                } catch (Exception ignored) {}
+
+                android.os.Process.killProcess(android.os.Process.myPid());
+                System.exit(10);
+            }
+        });
+
+        // Check if previous crash exists
+        checkAndShowCrashDialog();
+
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         FrameLayout rootContainer = new FrameLayout(this);
@@ -146,10 +172,9 @@ public class MainActivity extends Activity {
         tvFileSize.setTextColor(0xFF333333);
         cardLayout.addView(tvFileSize, textParams);
 
-        // Version label in the corner of the Home screen
         TextView tvVersion = new TextView(this);
         String buildDateTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date());
-        tvVersion.setText("v0.1 build " + buildDateTime);
+        tvVersion.setText("v0.2 build " + buildDateTime);
         tvVersion.setTextSize(11);
         tvVersion.setTextColor(0xFF888888);
         FrameLayout.LayoutParams versionParams = new FrameLayout.LayoutParams(
@@ -205,6 +230,40 @@ public class MainActivity extends Activity {
         });
 
         setContentView(rootContainer);
+    }
+
+    private void checkAndShowCrashDialog() {
+        File crashFile = new File(getFilesDir(), "last_crash.txt");
+        if (crashFile.exists()) {
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(new FileReader(crashFile))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    sb.append(line).append("\n");
+                }
+            } catch (Exception ignored) {}
+
+            crashFile.delete();
+
+            if (sb.length() > 0) {
+                TextView tv = new TextView(this);
+                tv.setText(sb.toString());
+                tv.setTextSize(12);
+                tv.setTextColor(0xFF333333);
+                tv.setTextIsSelectable(true);
+                int pad = (int) (12 * getResources().getDisplayMetrics().density);
+                tv.setPadding(pad, pad, pad, pad);
+
+                android.widget.ScrollView sv = new android.widget.ScrollView(this);
+                sv.addView(tv);
+
+                new AlertDialog.Builder(this)
+                        .setTitle("דווח על קריסת אפליקציה קודמת (Crash Log)")
+                        .setView(sv)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show();
+            }
+        }
     }
 
     private void openFileSelector() {

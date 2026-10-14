@@ -32,8 +32,11 @@ public class FilesystemParser {
 
         DiagnosticReporter.log("Starting strict filesystem parsing. Total media size: " + totalSize);
 
-        // 1. Generate Raw Sector Dump for LBA 0, 1, 6, 2048, 8192, 32768, 65536, 1048576
+        // 1. Generate Raw Sector Dump for LBA 0 (512 bytes) + standard sectors
         generateAndStoreRawSectorDumps(source, totalSize);
+
+        // 2. Scan first 256MB for boot sector signatures ("EXFAT   ", "FAT32   ", "NTFS    ")
+        scanBootSignaturesInFirst256MB(source, totalSize);
 
         byte[] sector0 = new byte[512];
         if (source.readAt(0, sector0, 512) < 512) {
@@ -44,7 +47,6 @@ public class FilesystemParser {
         List<Long> candidatePartitionOffsets = new ArrayList<>();
         StringBuilder partitionInfoBuilder = new StringBuilder();
 
-        // 2. Strict MBR Check
         boolean hasValidMbrSig = (sector0[510] == (byte) 0x55 && sector0[511] == (byte) 0xAA);
         boolean hasValidPartitionEntries = false;
 
@@ -70,7 +72,6 @@ public class FilesystemParser {
                         candidatePartitionOffsets.add(off);
                     }
                 } else if (pType == 0xEE) {
-                    // Protective MBR indicating GPT
                     hasValidPartitionEntries = true;
                     byte[] lba1 = new byte[512];
                     if (source.readAt(512, lba1, 512) == 512) {
@@ -91,13 +92,11 @@ public class FilesystemParser {
             }
         }
 
-        // If LBA 0 is NOT a valid MBR with partition entries, DO NOT assume LBA 0 is a boot sector automatically unless it strictly validates as a boot sector.
         if (!hasValidMbrSig || !hasValidPartitionEntries) {
             partitionInfoBuilder.append("לא נמצא MBR תקף עם רשומות מחיצה. נבדק האם LBA 0 עצמו הוא מקטע איתחול ישיר (Superfloppy).\n");
             candidatePartitionOffsets.add(0L);
         }
 
-        // Also add standard LBAs as candidates
         long[] standardLbas = {0, 2048, 8192, 32768, 65536, 1048576};
         for (long lba : standardLbas) {
             long off = lba * 512;
@@ -117,7 +116,6 @@ public class FilesystemParser {
 
             byte[] bootSector = new byte[512];
             if (source.readAt(partOff, bootSector, 512) == 512) {
-                // A) Strict FAT32 Boot Sector
                 if (isStrictFat32(bootSector)) {
                     recoveryMethodUsed = "מערכת קבצים FAT32 (LBA " + (partOff / 512) + ")";
                     DiagnosticReporter.setFsTypeDetected("FAT32 Strict at LBA " + (partOff / 512));
@@ -127,7 +125,6 @@ public class FilesystemParser {
                         return entries;
                     }
                 }
-                // B) Strict exFAT Boot Sector
                 if (isExFat(bootSector)) {
                     recoveryMethodUsed = "מערכת קבצים exFAT (LBA " + (partOff / 512) + ")";
                     DiagnosticReporter.setFsTypeDetected("exFAT at LBA " + (partOff / 512));
@@ -138,7 +135,6 @@ public class FilesystemParser {
                     }
                 }
 
-                // C) Backup Boot Sector FAT32 (sector 6)
                 long backupOff1 = partOff + 6 * 512;
                 if (backupOff1 + 512 <= totalSize && source.readAt(backupOff1, bootSector, 512) == 512 && isStrictFat32(bootSector)) {
                     recoveryMethodUsed = "מקטע איתחול מגובי FAT32 (Backup Boot Sector)";
@@ -147,7 +143,6 @@ public class FilesystemParser {
                     if (!entries.isEmpty()) return entries;
                 }
 
-                // D) Second FAT table check
                 entries = parseFat32(source, partOff, bootSector, true, skippedLogBuilder);
                 if (!entries.isEmpty()) {
                     recoveryMethodUsed = "טבלת FAT שנייה מגובה (Second FAT)";
@@ -165,17 +160,43 @@ public class FilesystemParser {
 
     private static void generateAndStoreRawSectorDumps(ByteSource source, long totalSize) {
         StringBuilder sb = new StringBuilder();
-        long[] dumpLbas = {0, 1, 6, 2048, 8192, 32768, 65536, 1048576};
+        
+        // Dump LBA 0 (Full 512 bytes)
+        sb.append("=== LBA 0 (Full 512 Bytes Raw Hex) ===\n");
+        try {
+            byte[] lba0Buf = new byte[512];
+            int read = source.readAt(0, lba0Buf, 512);
+            if (read > 0) {
+                for (int i = 0; i < read; i += 16) {
+                    sb.append(String.format("0x%04X: ", i));
+                    for (int j = 0; j < 16; j++) {
+                        if (i + j < read) {
+                            sb.append(String.format("%02X ", lba0Buf[i + j]));
+                        } else {
+                            sb.append("   ");
+                        }
+                    }
+                    sb.append("\n");
+                }
+                if (read >= 512) {
+                    sb.append(String.format("Offsets 510-511 Signature: %02X %02X\n", lba0Buf[510] & 0xFF, lba0Buf[511] & 0xFF));
+                }
+            }
+        } catch (Exception e) {
+            sb.append("(שגיאה בקריאת LBA 0: ").append(e.getMessage()).append(")\n");
+        }
+        sb.append("\n");
 
+        // Additional standard LBA dumps
+        long[] dumpLbas = {1, 6, 2048, 8192, 32768, 65536, 1048576};
         for (long lba : dumpLbas) {
             long off = lba * 512;
             if (off >= totalSize) continue;
 
-            sb.append("--- LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append(") ---\n");
+            sb.append("--- LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append;) ---\n");
             try {
-                int bytesToRead = (lba == 0) ? 512 : 64;
-                byte[] buf = new byte[bytesToRead];
-                int read = source.readAt(off, buf, bytesToRead);
+                byte[] buf = new byte[64];
+                int read = source.readAt(off, buf, 64);
                 if (read > 0) {
                     for (int i = 0; i < read; i += 16) {
                         sb.append(String.format("0x%04X: ", i));
@@ -189,14 +210,6 @@ public class FilesystemParser {
                         sb.append("\n");
                     }
                 }
-
-                // Read bytes at 510-511 if media is large enough
-                if (off + 512 <= totalSize) {
-                    byte[] sigBuf = new byte[2];
-                    if (source.readAt(off + 510, sigBuf, 2) == 2) {
-                        sb.append(String.format("Offsets 510-511: %02X %02X\n", sigBuf[0] & 0xFF, sigBuf[1] & 0xFF));
-                    }
-                }
             } catch (Exception e) {
                 sb.append("(שגיאה בקריאת סקטור: ").append(e.getMessage()).append(")\n");
             }
@@ -205,47 +218,79 @@ public class FilesystemParser {
         DiagnosticReporter.setRawSectorDumpText(sb.toString());
     }
 
+    private static void scanBootSignaturesInFirst256MB(ByteSource source, long totalSize) {
+        long maxScanLimit = Math.min(totalSize, 256L * 1024L * 1024L);
+        byte[] sectorBuf = new byte[512];
+        long sectorSize = 512;
+
+        for (long off = 0; off + 512 <= maxScanLimit; off += sectorSize) {
+            try {
+                if (source.readAt(off, sectorBuf, 512) == 512) {
+                    String asciiStr = new String(sectorBuf, 0, 512, StandardCharsets.US_ASCII);
+                    boolean found = false;
+                    String sigName = "";
+
+                    if (asciiStr.contains("EXFAT   ")) {
+                        found = true;
+                        sigName = "EXFAT";
+                    } else if (asciiStr.contains("FAT32   ")) {
+                        found = true;
+                        sigName = "FAT32";
+                    } else if (asciiStr.contains("NTFS    ")) {
+                        found = true;
+                        sigName = "NTFS";
+                    }
+
+                    if (found) {
+                        long lba = off / 512;
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("שעון חתימה [").append(sigName).append("] נמצא ב-LBA ").append(lba).append(" (Offset 0x").append(Long.toHexString(off)).append("):\nקידומת 64 בתים ראשונים:\n");
+                        for (int i = 0; i < 64; i += 16) {
+                            sb.append(String.format("0x%04X: ", i));
+                            for (int j = 0; j < 16; j++) {
+                                sb.append(String.format("%02X ", sectorBuf[i + j] & 0xFF));
+                            }
+                            sb.append("\n");
+                        }
+                        DiagnosticReporter.addSignatureSectorDump(sb.toString());
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
     private static boolean isStrictFat32(byte[] boot) {
         try {
-            // 1. Check jump instruction (0xEB xx 0x90 or 0xE9 xx xx)
             int jmp0 = boot[0] & 0xFF;
             int jmp2 = boot[2] & 0xFF;
             boolean validJmp = (jmp0 == 0xEB && jmp2 == 0x90) || (jmp0 == 0xE9);
             if (!validJmp) return false;
 
-            // 2. Bytes per sector must be 512, 1024, 2048, or 4096
             int bytesPerSector = ByteBuffer.wrap(boot, 11, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
             if (bytesPerSector != 512 && bytesPerSector != 1024 && bytesPerSector != 2048 && bytesPerSector != 4096) {
                 return false;
             }
 
-            // 3. Sectors per cluster must be power of 2 from 1 to 128
             int sectorsPerCluster = boot[13] & 0xFF;
             if (sectorsPerCluster == 0 || (sectorsPerCluster & (sectorsPerCluster - 1)) != 0 || sectorsPerCluster > 128) {
                 return false;
             }
 
-            // 4. Reserved sectors > 0
             int reservedSectorCount = ByteBuffer.wrap(boot, 14, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
             if (reservedSectorCount == 0) return false;
 
-            // 5. FAT count 1 or 2
             int fatCount = boot[16] & 0xFF;
             if (fatCount != 1 && fatCount != 2) return false;
 
-            // 6. Root entries count must be 0 for FAT32
             int rootEntryCount = ByteBuffer.wrap(boot, 17, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
             if (rootEntryCount != 0) return false;
 
-            // 7. Sectors per FAT 16 must be 0
             int fatSize16 = ByteBuffer.wrap(boot, 22, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
             if (fatSize16 != 0) return false;
 
-            // 8. Sectors per FAT 32 > 0
             long fatSize32 = ByteBuffer.wrap(boot, 36, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xFFFFFFFFL;
             if (fatSize32 == 0) return false;
 
-            // 9. Boot signature at 510-511 must be 0x55AA
             if (boot[510] != (byte) 0x55 || boot[511] != (byte) 0xAA) {
                 return false;
             }
@@ -405,13 +450,13 @@ public class FilesystemParser {
                 }
 
                 int attr = clusterData[i + 11] & 0xFF;
-                if ((attr & 0x08) != 0) { // Volume ID
+                if ((attr & 0x08) != 0) {
                     skippedLog.append("תווית נפח (Volume ID) דולגה.\n");
                     lfnBuffer.clear();
                     continue;
                 }
 
-                if ((attr & 0x0F) == 0x0F) { // LFN entry
+                if ((attr & 0x0F) == 0x0F) {
                     lfnBuffer.add(new Fat32LfnItem(clusterData, i));
                     continue;
                 }

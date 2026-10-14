@@ -41,6 +41,7 @@ public class ScanActivity extends Activity {
     public static final String EXTRA_URI = "extra_uri";
     public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
     private static final int REQUEST_CODE_SAVE_DIR = 2002;
+    private static final int REQUEST_CODE_SAVE_REPORT = 2003;
 
     private Uri sourceUri;
     private String usbDeviceName;
@@ -51,6 +52,8 @@ public class ScanActivity extends Activity {
     private TextView tvBreadcrumb;
     private TextView tvSummaryBox;
     private Button btnCopyReport;
+    private Button btnSaveReport;
+    private Button btnDeepScanNow;
     private ProgressBar progressBar;
     private ListView listView;
     private Button btnCancel;
@@ -68,6 +71,7 @@ public class ScanActivity extends Activity {
     private String lastReportMethod = "מנתח מערכת קבצים...";
     private int carvedCount = 0;
     private int fsFoundCount = 0;
+    private boolean isDeepScanning = false;
 
     private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
         @Override
@@ -197,7 +201,6 @@ public class ScanActivity extends Activity {
         methodParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
         topCard.addView(tvMethodUsed, methodParams);
 
-        // Summary box with full report text included
         tvSummaryBox = new TextView(this);
         tvSummaryBox.setTextSize(12);
         tvSummaryBox.setTextColor(0xFF444444);
@@ -212,27 +215,93 @@ public class ScanActivity extends Activity {
         topCard.addView(tvSummaryBox, summaryParams);
         updateSummaryBox();
 
-        btnCopyReport = new Button(this);
-        btnCopyReport.setText("העתק דוח מלא (Copy report)");
-        btnCopyReport.setTextSize(12);
-        btnCopyReport.setTextColor(0xFFFFFFFF);
-        btnCopyReport.setBackgroundColor(0xFF1976D2);
-        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+        // 1) Buttons row for Copy and Save report + Deep Scan button
+        LinearLayout reportButtonsLayout = new LinearLayout(this);
+        reportButtonsLayout.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams rbParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        copyParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
-        topCard.addView(btnCopyReport, copyParams);
+        rbParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        topCard.addView(reportButtonsLayout, rbParams);
 
+        btnCopyReport = new Button(this);
+        btnCopyReport.setText("העתק דוח");
+        btnCopyReport.setTextSize(11);
+        btnCopyReport.setTextColor(0xFFFFFFFF);
+        btnCopyReport.setBackgroundColor(0xFF1976D2);
+        LinearLayout.LayoutParams btnR1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        btnR1.rightMargin = 4;
+        reportButtonsLayout.addView(btnCopyReport, btnR1);
+
+        btnSaveReport = new Button(this);
+        btnSaveReport.setText("שמור דוח (.txt)");
+        btnSaveReport.setTextSize(11);
+        btnSaveReport.setTextColor(0xFFFFFFFF);
+        btnSaveReport.setBackgroundColor(0xFF00838F);
+        LinearLayout.LayoutParams btnR2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        btnR2.rightMargin = 4;
+        reportButtonsLayout.addView(btnSaveReport, btnR2);
+
+        btnDeepScanNow = new Button(this);
+        btnDeepScanNow.setText("סריקה עמוקה");
+        btnDeepScanNow.setTextSize(11);
+        btnDeepScanNow.setTextColor(0xFFFFFFFF);
+        btnDeepScanNow.setBackgroundColor(0xFF6A1B9A);
+        reportButtonsLayout.addView(btnDeepScanNow, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        // 1) Safe Copy Report Implementation with try/catch and MainLooper
         btnCopyReport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData clip = ClipData.newPlainText("Scan Report", DiagnosticReporter.generateFullReport());
-                if (clipboard != null) {
-                    clipboard.setPrimaryClip(clip);
-                    Toast.makeText(ScanActivity.this, "הדוח המלא הועתק ללוח", Toast.LENGTH_SHORT).show();
+                try {
+                    final String reportText = DiagnosticReporter.generateFullReport();
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                                ClipData clip = ClipData.newPlainText("Scan Report", reportText);
+                                if (clipboard != null) {
+                                    clipboard.setPrimaryClip(clip);
+                                    Toast.makeText(ScanActivity.this, "הדוח המלא הועתק ללוח בהצלחה", Toast.LENGTH_SHORT).show();
+                                }
+                            } catch (Exception ex) {
+                                Toast.makeText(ScanActivity.this, "שגיאה בהעתקת הדוח ללוח", Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                    });
+                } catch (Exception e) {
+                    Toast.makeText(ScanActivity.this, "שגיאה בהפקת הדוח", Toast.LENGTH_SHORT).show();
                 }
+            }
+        });
+
+        // 1) Save report via ACTION_CREATE_DOCUMENT
+        btnSaveReport.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("text/plain");
+                intent.putExtra(Intent.EXTRA_TITLE, "sd_rescue_report.txt");
+                try {
+                    startActivityForResult(intent, REQUEST_CODE_SAVE_REPORT);
+                } catch (Exception e) {
+                    Toast.makeText(ScanActivity.this, "שגיאה בפתיחת שומר הקבצים", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
+        // 4) Independent "סריקה עמוקה" (Deep Scan) button implementation
+        btnDeepScanNow.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (isDeepScanning) {
+                    Toast.makeText(ScanActivity.this, "הסריקה העמוקה כבר רצה...", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                runManualDeepScan();
             }
         });
 
@@ -396,6 +465,85 @@ public class ScanActivity extends Activity {
         setContentView(root);
     }
 
+    private void runManualDeepScan() {
+        if (byteSource == null) {
+            Toast.makeText(this, "אין מקור סריקה זמין", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        isDeepScanning = true;
+        Toast.makeText(this, "מתחיל סריקה עמוקה (Carving)...", Toast.LENGTH_SHORT).show();
+        tvStatus.setText("מבצע סריקה עמוקה (Carving)...");
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Carver carver = new Carver();
+                    carver.carve(byteSource, new CarverCallback() {
+                        @Override
+                        public void onFileFound(final CarvedFile carvedFile) {
+                            boolean exists = false;
+                            for (RecoveredEntry h : allFlatEntries) {
+                                if (Math.abs(h.getOffset() - carvedFile.getOffset()) < 4096) {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                            if (!exists) {
+                                String typeFolderName = carvedFile.getType().getName();
+                                String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
+                                final RecoveredEntry entry = new RecoveredEntry(
+                                        fileName,
+                                        "/Carved files/" + typeFolderName,
+                                        carvedFile.getOffset(),
+                                        carvedFile.getLength(),
+                                        carvedFile.getType(),
+                                        false,
+                                        false,
+                                        System.currentTimeMillis(),
+                                        fileName.getBytes()
+                                );
+                                allFlatEntries.add(entry);
+                                carvedCount++;
+                                refreshTreeOnMainThread();
+                            }
+                        }
+
+                        @Override
+                        public void onProgress(final long bytesScanned, final long totalBytes) {
+                            final int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
+                            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    progressBar.setProgress(percent * 10);
+                                    tvStatus.setText("סריקה עמוקה... (" + percent + "%) • נמצאו: " + allFlatEntries.size());
+                                }
+                            });
+                        }
+                    });
+
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            isDeepScanning = false;
+                            tvStatus.setText("הסריקה העמוקה הסתיימה בהצלחה");
+                            Toast.makeText(ScanActivity.this, "הסריקה העמוקה הסתיימה", Toast.LENGTH_LONG).show();
+                        }
+                    });
+                } catch (Exception e) {
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            isDeepScanning = false;
+                            Toast.makeText(ScanActivity.this, "שגיאה בסריקה העמוקה", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+
     private void updateSummaryBox() {
         StringBuilder sb = new StringBuilder();
         sb.append("סיכום סריקה:\n");
@@ -527,6 +675,22 @@ public class ScanActivity extends Activity {
             if (data != null && data.getData() != null) {
                 saveEntriesRecursive(data.getData(), saveAllModeFlag);
             }
+        } else if (requestCode == REQUEST_CODE_SAVE_REPORT && resultCode == RESULT_OK) {
+            if (data != null && data.getData() != null) {
+                writeReportToFile(data.getData());
+            }
+        }
+    }
+
+    private void writeReportToFile(Uri uri) {
+        try (OutputStream out = getContentResolver().openOutputStream(uri)) {
+            if (out != null) {
+                String report = DiagnosticReporter.generateFullReport();
+                out.write(report.getBytes(StandardCharsets.UTF_8));
+                Toast.makeText(this, "הדוח נשמר בהצלחה קובץ טקסט", Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "שגיאה בשמירת הדוח לקובץ", Toast.LENGTH_SHORT).show();
         }
     }
 

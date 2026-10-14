@@ -17,6 +17,7 @@ public class DiagnosticReporter {
     private static String lunUsed = "0";
     private static String rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
     private static final List<String> rawDirEntriesDump = new ArrayList<>();
+    private static final List<String> signatureSectorsDump = new ArrayList<>();
 
     public static synchronized void clear() {
         logs.clear();
@@ -32,6 +33,7 @@ public class DiagnosticReporter {
         lunUsed = "0";
         rawSectorDumpText = "טרם נסרקו סקטורים גולמיים";
         rawDirEntriesDump.clear();
+        signatureSectorsDump.clear();
     }
 
     public static synchronized void log(String msg) {
@@ -90,6 +92,10 @@ public class DiagnosticReporter {
         rawDirEntriesDump.add(dump);
     }
 
+    public static synchronized void addSignatureSectorDump(String dump) {
+        signatureSectorsDump.add(dump);
+    }
+
     public static synchronized String generateFullReport() {
         StringBuilder sb = new StringBuilder();
         sb.append("=== דוח אבחון סריקה מקיף (SD Rescue) ===\n\n");
@@ -102,9 +108,17 @@ public class DiagnosticReporter {
         sb.append("7. LBA של תיקיית השורש (Root Dir): ").append(rootDirLba).append("\n");
         sb.append("8. מספר רשומות תיקיית שורש שנקראו: ").append(rootEntriesCount).append("\n");
         sb.append("9. סך קבצים ותיקיות שנמצאו: ").append(filesFoldersFound).append("\n\n");
-        sb.append("10. דאמפ סקטורים גולמיים (LBA 0, 1, 6, 2048, 8192, 32768, 65536, 1048576):\n").append(rawSectorDumpText).append("\n\n");
-        sb.append("11. פריטים שדולגו וסיבת דילוג:\n").append(skippedEntriesLog).append("\n\n");
-        sb.append("12. דאמפ 32 רשומות שורש ראשונות (Hex + פיענוח):\n");
+        sb.append("10. דאמפ סקטורים גולמיים ו-LBA 0 (512 בתים):\n").append(rawSectorDumpText).append("\n\n");
+        sb.append("11. סקטורים עם חתימות איתחול (EXFAT, FAT32, NTFS) בתוך 256MB ראשונים:\n");
+        if (signatureSectorsDump.isEmpty()) {
+            sb.append("(לא נמצאו חתימות נוספות)\n");
+        } else {
+            for (String s : signatureSectorsDump) {
+                sb.append(s).append("\n");
+            }
+        }
+        sb.append("\n12. פריטים שדולגו וסיבת דילוג:\n").append(skippedEntriesLog).append("\n\n");
+        sb.append("13. דאמפ 32 רשומות שורש ראשונות (Hex + פיענוח):\n");
         if (rawDirEntriesDump.isEmpty()) {
             sb.append("(אין דאמפ זמין)\n");
         } else {
@@ -112,10 +126,15 @@ public class DiagnosticReporter {
                 sb.append(d).append("\n");
             }
         }
-        sb.append("\n13. יומן אירועים כללי:\n");
+        sb.append("\n14. יומן אירועים כללי:\n");
         for (String l : logs) {
             sb.append(l).append("\n");
         }
-        return sb.toString();
+
+        String result = sb.toString();
+        if (result.length() > 100 * 1024) {
+            result = result.substring(0, 100 * 1024) + "\n\n[הדוח קוצר עקב חריגה מגבול 100KB]";
+        }
+        return result;
     }
 }
