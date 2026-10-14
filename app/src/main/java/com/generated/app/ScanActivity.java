@@ -30,6 +30,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.OutputStream;
+import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -686,7 +687,7 @@ public class ScanActivity extends Activity {
         try (OutputStream out = getContentResolver().openOutputStream(uri)) {
             if (out != null) {
                 String report = DiagnosticReporter.generateFullReport();
-                out.write(report.getBytes(StandardCharsets.UTF_8));
+                out.write(report.getBytes(Charset.forName("UTF-8")));
                 Toast.makeText(this, "הדוח נשמר בהצלחה קובץ טקסט", Toast.LENGTH_SHORT).show();
             }
         } catch (Exception e) {
