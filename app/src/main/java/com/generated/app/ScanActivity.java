@@ -1141,7 +1141,11 @@ public class ScanActivity extends Activity {
                         public void onFileFound(final CarvedFile carvedFile) {
                             String typeFolderName = FileType.safeName(carvedFile.getType());
                             String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
+                            long assignedId = System.nanoTime() & 0x7FFFFFFFFFFL; // Unique ID for deep scan item
+                            long rootId = dbHelper.getRootId();
                             RecoveredEntry entry = new RecoveredEntry(
+                                    assignedId,
+                                    rootId,
                                     fileName,
                                     "/Carved files/" + typeFolderName,
                                     carvedFile.getOffset(),
@@ -1150,7 +1154,8 @@ public class ScanActivity extends Activity {
                                     false,
                                     false,
                                     System.currentTimeMillis(),
-                                    fileName.getBytes(StandardCharsets.UTF_8)
+                                    fileName.getBytes(StandardCharsets.UTF_8),
+                                    0
                             );
                             List<RecoveredEntry> single = new ArrayList<>();
                             single.add(entry);
@@ -1412,15 +1417,9 @@ public class ScanActivity extends Activity {
     }
 
     private void showRawBytesHexDialog(RecoveredEntry entry) {
-        long parentId = dbHelper.getParentId(entry.getPath(), entry.getName());
+        long parentId = entry.getParentId();
         int childrenCount = dbHelper.getChildrenCountForNode(entry.getId());
-        long firstCluster = 0;
-        try {
-            byte[] raw = entry.getRawNameBytes();
-            if (raw != null && raw.length >= 32) {
-                firstCluster = ((long) (raw[20] & 0xFF | (raw[21] & 0xFF) << 8) << 16) | (raw[26] & 0xFF | (raw[27] & 0xFF) << 8);
-            }
-        } catch (Exception ignored) {}
+        long firstCluster = entry.getFirstCluster();
 
         StringBuilder sb = new StringBuilder();
         sb.append("=== אבחון פרטי צומת (Node Diagnostics) ===\n");

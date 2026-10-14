@@ -13,7 +13,7 @@ import java.util.List;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 5;
+    private static final int DATABASE_VERSION = 6;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -28,6 +28,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_SELECTED = "selected";
     public static final String COL_RAW_NAME = "raw_name";
     public static final String COL_UNREADABLE = "unreadable";
+    public static final String COL_FIRST_CLUSTER = "first_cluster";
 
     private static DatabaseHelper instance;
 
@@ -58,7 +59,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     @Override
     public void onCreate(SQLiteDatabase db) {
         String createTable = "CREATE TABLE " + TABLE_NODES + " (" +
-                COL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                COL_ID + " INTEGER PRIMARY KEY, " +
                 COL_PARENT_ID + " INTEGER, " +
                 COL_NAME + " TEXT, " +
                 COL_PATH + " TEXT, " +
@@ -69,11 +70,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_TYPE + " TEXT, " +
                 COL_SELECTED + " INTEGER DEFAULT 0, " +
                 COL_RAW_NAME + " BLOB, " +
-                COL_UNREADABLE + " INTEGER DEFAULT 0)";
+                COL_UNREADABLE + " INTEGER DEFAULT 0, " +
+                COL_FIRST_CLUSTER + " INTEGER DEFAULT 0)";
         db.execSQL(createTable);
         db.execSQL("CREATE INDEX idx_parent ON " + TABLE_NODES + "(" + COL_PARENT_ID + ")");
         db.execSQL("CREATE INDEX idx_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
         db.execSQL("CREATE INDEX idx_name ON " + TABLE_NODES + "(" + COL_NAME + ")");
+        db.execSQL("CREATE INDEX idx_cluster ON " + TABLE_NODES + "(" + COL_FIRST_CLUSTER + ")");
     }
 
     @Override
@@ -96,8 +99,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             for (RecoveredEntry entry : entries) {
                 ContentValues cv = new ContentValues();
-                long parentId = getOrCreateParentId(db, entry.getPath());
-                cv.put(COL_PARENT_ID, parentId);
+                cv.put(COL_ID, entry.getId());
+                cv.put(COL_PARENT_ID, entry.getParentId());
                 cv.put(COL_NAME, entry.getName());
                 cv.put(COL_PATH, entry.getPath());
                 cv.put(COL_IS_DIR, entry.isDirectory() ? 1 : 0);
@@ -108,7 +111,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 cv.put(COL_SELECTED, entry.isSelected() ? 1 : 0);
                 cv.put(COL_RAW_NAME, entry.getRawNameBytes());
                 cv.put(COL_UNREADABLE, entry.isUnreadable() ? 1 : 0);
-                db.insert(TABLE_NODES, null, cv);
+                cv.put(COL_FIRST_CLUSTER, entry.getFirstCluster());
+                db.insertWithOnConflict(TABLE_NODES, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
             }
             db.setTransactionSuccessful();
         } catch (Exception e) {
@@ -116,62 +120,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         } finally {
             try { db.endTransaction(); } catch (Exception ignored) {}
         }
-    }
-
-    private long getOrCreateParentId(SQLiteDatabase db, String path) {
-        if (path == null || path.isEmpty() || path.equals("/")) {
-            Cursor c = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new String[]{"/", ""});
-            if (c.moveToFirst()) {
-                long id = c.getLong(0);
-                c.close();
-                return id;
-            }
-            c.close();
-            ContentValues cv = new ContentValues();
-            cv.put(COL_PARENT_ID, 0);
-            cv.put(COL_NAME, "");
-            cv.put(COL_PATH, "/");
-            cv.put(COL_IS_DIR, 1);
-            cv.put(COL_SIZE, 0);
-            cv.put(COL_OFFSET, 0);
-            cv.put(COL_MODIFIED, System.currentTimeMillis());
-            cv.put(COL_TYPE, FileType.UNKNOWN.getName());
-            cv.put(COL_SELECTED, 0);
-            cv.put(COL_RAW_NAME, new byte[0]);
-            cv.put(COL_UNREADABLE, 0);
-            return db.insert(TABLE_NODES, null, cv);
-        }
-
-        String[] parts = path.split("/");
-        long currentParentId = 0;
-        String currentPathSoFar = "";
-
-        for (String part : parts) {
-            if (part.isEmpty()) continue;
-            currentPathSoFar = currentPathSoFar.equals("/") ? "/" + part : currentPathSoFar + "/" + part;
-            
-            Cursor c = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new String[]{currentPathSoFar, part});
-            if (c.moveToFirst()) {
-                currentParentId = c.getLong(0);
-                c.close();
-            } else {
-                c.close();
-                ContentValues cv = new ContentValues();
-                cv.put(COL_PARENT_ID, currentParentId);
-                cv.put(COL_NAME, part);
-                cv.put(COL_PATH, currentPathSoFar);
-                cv.put(COL_IS_DIR, 1);
-                cv.put(COL_SIZE, 0);
-                cv.put(COL_OFFSET, 0);
-                cv.put(COL_MODIFIED, System.currentTimeMillis());
-                cv.put(COL_TYPE, FileType.UNKNOWN.getName());
-                cv.put(COL_SELECTED, 0);
-                cv.put(COL_RAW_NAME, part.getBytes(StandardCharsets.UTF_16LE));
-                cv.put(COL_UNREADABLE, 0);
-                currentParentId = db.insert(TABLE_NODES, null, cv);
-            }
-        }
-        return currentParentId;
     }
 
     public synchronized long getRootId() {
@@ -192,28 +140,30 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 500", new String[]{String.valueOf(parentId)});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 500", new String[]{String.valueOf(parentId)});
         
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
-                String name = c.getString(1);
-                String path = c.getString(2);
-                long offset = c.getLong(3);
-                long size = c.getLong(4);
-                String typeStr = c.getString(5);
-                boolean isDir = c.getInt(6) == 1;
-                long modified = c.getLong(7);
-                int selectedState = c.getInt(8);
-                byte[] rawName = c.getBlob(9);
-                boolean isUnreadable = c.getInt(10) == 1;
+                long pId = c.getLong(1);
+                String name = c.getString(2);
+                String path = c.getString(3);
+                long offset = c.getLong(4);
+                long size = c.getLong(5);
+                String typeStr = c.getString(6);
+                boolean isDir = c.getInt(7) == 1;
+                long modified = c.getLong(8);
+                int selectedState = c.getInt(9);
+                byte[] rawName = c.getBlob(10);
+                boolean isUnreadable = c.getInt(11) == 1;
+                long firstCluster = c.getLong(12);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(id, name, path, offset, size, type, false, isDir, modified, rawName);
+                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offset, size, type, false, isDir, modified, rawName, firstCluster);
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
 
@@ -252,7 +202,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 fileCount = c.getInt(1);
             }
         } catch (Exception ignored) {
-            // Fallback if WITH RECURSIVE fails or table structure differs
             try {
                 if (c != null) c.close();
                 Cursor fallback = db.rawQuery("SELECT " + COL_SIZE + ", " + COL_IS_DIR + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + " LIKE ?", new String[]{dirPath + "%"});
@@ -290,27 +239,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (query == null || query.trim().isEmpty()) return list;
         SQLiteDatabase db = getReadableDatabase();
         String pattern = "%" + query.trim() + "%";
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " WHERE " + COL_NAME + " LIKE ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 100", new String[]{pattern});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + COL_NAME + " LIKE ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 100", new String[]{pattern});
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
-                String name = c.getString(1);
-                String path = c.getString(2);
-                long offset = c.getLong(3);
-                long size = c.getLong(4);
-                String typeStr = c.getString(5);
-                boolean isDir = c.getInt(6) == 1;
-                long modified = c.getLong(7);
-                int selectedState = c.getInt(8);
-                byte[] rawName = c.getBlob(9);
-                boolean isUnreadable = c.getInt(10) == 1;
+                long pId = c.getLong(1);
+                String name = c.getString(2);
+                String path = c.getString(3);
+                long offset = c.getLong(4);
+                long size = c.getLong(5);
+                String typeStr = c.getString(6);
+                boolean isDir = c.getInt(7) == 1;
+                long modified = c.getLong(8);
+                int selectedState = c.getInt(9);
+                byte[] rawName = c.getBlob(10);
+                boolean isUnreadable = c.getInt(11) == 1;
+                long firstCluster = c.getLong(12);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(id, name, path, offset, size, type, false, isDir, modified, rawName);
+                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offset, size, type, false, isDir, modified, rawName, firstCluster);
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 list.add(entry);
@@ -402,27 +353,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public synchronized List<RecoveredEntry> getAllSelectedFiles() {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
-                String name = c.getString(1);
-                String path = c.getString(2);
-                long offset = c.getLong(3);
-                long size = c.getLong(4);
-                String typeStr = c.getString(5);
-                boolean isDir = c.getInt(6) == 1;
-                long modified = c.getLong(7);
-                int selectedState = c.getInt(8);
-                byte[] rawName = c.getBlob(9);
-                boolean isUnreadable = c.getInt(10) == 1;
+                long pId = c.getLong(1);
+                String name = c.getString(2);
+                String path = c.getString(3);
+                long offset = c.getLong(4);
+                long size = c.getLong(5);
+                String typeStr = c.getString(6);
+                boolean isDir = c.getInt(7) == 1;
+                long modified = c.getLong(8);
+                int selectedState = c.getInt(9);
+                byte[] rawName = c.getBlob(10);
+                boolean isUnreadable = c.getInt(11) == 1;
+                long firstCluster = c.getLong(12);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(id, name, path, offset, size, type, false, isDir, modified, rawName);
+                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offset, size, type, false, isDir, modified, rawName, firstCluster);
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 list.add(entry);
@@ -435,27 +388,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public synchronized List<RecoveredEntry> getAllEntriesForSaveAll() {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
-                String name = c.getString(1);
-                String path = c.getString(2);
-                long offset = c.getLong(3);
-                long size = c.getLong(4);
-                String typeStr = c.getString(5);
-                boolean isDir = c.getInt(6) == 1;
-                long modified = c.getLong(7);
-                int selectedState = c.getInt(8);
-                byte[] rawName = c.getBlob(9);
-                boolean isUnreadable = c.getInt(10) == 1;
+                long pId = c.getLong(1);
+                String name = c.getString(2);
+                String path = c.getString(3);
+                long offset = c.getLong(4);
+                long size = c.getLong(5);
+                String typeStr = c.getString(6);
+                boolean isDir = c.getInt(7) == 1;
+                long modified = c.getLong(8);
+                int selectedState = c.getInt(9);
+                byte[] rawName = c.getBlob(10);
+                boolean isUnreadable = c.getInt(11) == 1;
+                long firstCluster = c.getLong(12);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(id, name, path, offset, size, type, false, isDir, modified, rawName);
+                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offset, size, type, false, isDir, modified, rawName, firstCluster);
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 list.add(entry);
@@ -469,27 +424,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=1") : (COL_IS_DIR + "=1 AND " + COL_SELECTED + "!=0");
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY LENGTH(" + COL_PATH + ") ASC, " + COL_PARENT_ID + " ASC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY LENGTH(" + COL_PATH + ") ASC, " + COL_PARENT_ID + " ASC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
-                String name = c.getString(1);
-                String path = c.getString(2);
-                long offset = c.getLong(3);
-                long size = c.getLong(4);
-                String typeStr = c.getString(5);
-                boolean isDir = c.getInt(6) == 1;
-                long modified = c.getLong(7);
-                int selectedState = c.getInt(8);
-                byte[] rawName = c.getBlob(9);
-                boolean isUnreadable = c.getInt(10) == 1;
+                long pId = c.getLong(1);
+                String name = c.getString(2);
+                String path = c.getString(3);
+                long offset = c.getLong(4);
+                long size = c.getLong(5);
+                String typeStr = c.getString(6);
+                boolean isDir = c.getInt(7) == 1;
+                long modified = c.getLong(8);
+                int selectedState = c.getInt(9);
+                byte[] rawName = c.getBlob(10);
+                boolean isUnreadable = c.getInt(11) == 1;
+                long firstCluster = c.getLong(12);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(id, name, path, offset, size, type, false, isDir, modified, rawName);
+                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offset, size, type, false, isDir, modified, rawName, firstCluster);
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 list.add(entry);
@@ -503,27 +460,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=0") : (COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1");
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY " + COL_PATH + " ASC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY " + COL_PATH + " ASC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
-                String name = c.getString(1);
-                String path = c.getString(2);
-                long offset = c.getLong(3);
-                long size = c.getLong(4);
-                String typeStr = c.getString(5);
-                boolean isDir = c.getInt(6) == 1;
-                long modified = c.getLong(7);
-                int selectedState = c.getInt(8);
-                byte[] rawName = c.getBlob(9);
-                boolean isUnreadable = c.getInt(10) == 1;
+                long pId = c.getLong(1);
+                String name = c.getString(2);
+                String path = c.getString(3);
+                long offset = c.getLong(4);
+                long size = c.getLong(5);
+                String typeStr = c.getString(6);
+                boolean isDir = c.getInt(7) == 1;
+                long modified = c.getLong(8);
+                int selectedState = c.getInt(9);
+                byte[] rawName = c.getBlob(10);
+                boolean isUnreadable = c.getInt(11) == 1;
+                long firstCluster = c.getLong(12);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(id, name, path, offset, size, type, false, isDir, modified, rawName);
+                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offset, size, type, false, isDir, modified, rawName, firstCluster);
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 list.add(entry);
