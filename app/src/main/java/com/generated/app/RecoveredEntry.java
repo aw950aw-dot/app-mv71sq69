@@ -18,6 +18,7 @@ public class RecoveredEntry {
     private long cachedRecursiveSize;
     private int cachedRecursiveFileCount;
     private boolean isUnreadable;
+    private String unreadableReason;
 
     public RecoveredEntry(long id, long parentId, String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes, long firstCluster) {
         this.id = id;
@@ -34,6 +35,7 @@ public class RecoveredEntry {
         this.firstCluster = firstCluster;
         this.selectedState = 0;
         this.isUnreadable = false;
+        this.unreadableReason = null;
     }
 
     public RecoveredEntry(String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes, long firstCluster) {
@@ -126,5 +128,13 @@ public class RecoveredEntry {
 
     public void setUnreadable(boolean unreadable) {
         isUnreadable = unreadable;
+    }
+
+    public String getUnreadableReason() {
+        return unreadableReason;
+    }
+
+    public void setUnreadableReason(String unreadableReason) {
+        this.unreadableReason = unreadableReason;
     }
 }

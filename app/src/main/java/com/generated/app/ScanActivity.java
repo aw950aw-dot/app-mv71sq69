@@ -60,6 +60,7 @@ public class ScanActivity extends Activity {
     private Button btnSelectAll;
     private Button btnClearSelection;
     private TextView tvSelectionCounter;
+    private TextView tvFolderStatsLine;
 
     private ListView listView;
 
@@ -168,7 +169,6 @@ public class ScanActivity extends Activity {
 
         dbHelper = DatabaseHelper.getInstance(this);
 
-        // Check if database contains results from an older version
         if (dbHelper.isOlderVersionDb()) {
             new AlertDialog.Builder(this)
                     .setTitle("גרסה ישנה")
@@ -295,6 +295,17 @@ public class ScanActivity extends Activity {
         fixedTopBar.addView(layoutBreadcrumb, bcParams);
         updateBreadcrumbBar();
 
+        tvFolderStatsLine = new TextView(this);
+        tvFolderStatsLine.setTextSize(13);
+        tvFolderStatsLine.setTextColor(0xFF333333);
+        tvFolderStatsLine.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams statsLineParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        statsLineParams.bottomMargin = 8;
+        fixedTopBar.addView(tvFolderStatsLine, statsLineParams);
+
         LinearLayout selActionLayout = new LinearLayout(this);
         selActionLayout.setOrientation(LinearLayout.HORIZONTAL);
         selActionLayout.setGravity(Gravity.CENTER_VERTICAL);
@@ -373,10 +384,6 @@ public class ScanActivity extends Activity {
 
                 RecoveredEntry clicked = currentDirEntries.get(actualIndex);
                 if (clicked != null && clicked.isDirectory()) {
-                    if (clicked.isUnreadable()) {
-                        Toast.makeText(ScanActivity.this, "תיקייה זו מסומנת כלא קריאה ולא ניתן לפתוח אותה.", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
                     isSearching = false;
                     etSearch.setText("");
                     currentParentId = clicked.getId();
@@ -767,6 +774,9 @@ public class ScanActivity extends Activity {
                     public void run() {
                         searchResults = results;
                         currentDirEntries = searchResults;
+                        if (tvFolderStatsLine != null) {
+                            tvFolderStatsLine.setText("תוצאות חיפוש עבור \"" + query + "\": נמצאו " + searchResults.size() + " פריטים");
+                        }
                         adapter.notifyDataSetChanged();
                     }
                 });
@@ -799,12 +809,19 @@ public class ScanActivity extends Activity {
             @Override
             public void run() {
                 final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId);
+                final int foldersCount = dbHelper.getChildrenFoldersCountForNode(currentParentId);
+                final int filesCount = dbHelper.getChildrenFilesCountForNode(currentParentId);
                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
                         currentDirEntries = list;
                         updateBreadcrumbBar();
                         updateSummaryBox();
+                        if (tvFolderStatsLine != null) {
+                            tvFolderStatsLine.setText(String.format(Locale.getDefault(),
+                                    "In this folder (DB): %d folders, %d files, shown: %d",
+                                    foldersCount, filesCount, currentDirEntries.size()));
+                        }
                         adapter.notifyDataSetChanged();
                     }
                 });
@@ -1166,7 +1183,7 @@ public class ScanActivity extends Activity {
                         public void onFileFound(final CarvedFile carvedFile) {
                             String typeFolderName = FileType.safeName(carvedFile.getType());
                             String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
-                            long assignedId = System.nanoTime() & 0x7FFFFFFFFFFL; // Unique ID for deep scan item
+                            long assignedId = System.nanoTime() & 0x7FFFFFFFFFFL;
                             long rootId = dbHelper.getRootId();
                             RecoveredEntry entry = new RecoveredEntry(
                                     assignedId,
@@ -1354,8 +1371,9 @@ public class ScanActivity extends Activity {
                 if (entry.isUnreadable()) {
                     holder.ivIcon.setImageResource(android.R.drawable.ic_delete);
                     holder.tvName.setText("⚠️ " + entry.getName() + " (לא קריא)");
-                    holder.tvName.setTextColor(0xFF9E9E9E);
-                    holder.tvDetails.setText("תיקייה פגומה או לא קריאה");
+                    holder.tvName.setTextColor(0xFFE65100);
+                    String folderDesc = String.format(Locale.getDefault(), "%d קבצים • %s (לא קריא)", entry.getCachedRecursiveFileCount(), formatSize(entry.getCachedRecursiveSize()));
+                    holder.tvDetails.setText(folderDesc);
                 } else {
                     holder.ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
                     holder.tvName.setText("📁 " + entry.getName());
@@ -1378,14 +1396,16 @@ public class ScanActivity extends Activity {
 
                 holder.ivIcon.setImageBitmap(null);
                 if (entry.getType() == FileType.JPEG || entry.getType() == FileType.PNG) {
-                    try {
-                        byte[] thumbBuf = new byte[(int) Math.min(entry.getLength(), 16384)];
-                        int read = byteSource.readAt(entry.getOffset(), thumbBuf, thumbBuf.length);
-                        if (read > 0) {
-                            Bitmap bmp = BitmapFactory.decodeByteArray(thumbBuf, 0, read);
-                            if (bmp != null) holder.ivIcon.setImageBitmap(bmp);
-                        }
-                    } catch (Exception ignored) {}
+                    if (byteSource != null) {
+                        try {
+                            byte[] thumbBuf = new byte[(int) Math.min(entry.getLength(), 16384)];
+                            int read = byteSource.readAt(entry.getOffset(), thumbBuf, thumbBuf.length);
+                            if (read > 0) {
+                                Bitmap bmp = BitmapFactory.decodeByteArray(thumbBuf, 0, read);
+                                if (bmp != null) holder.ivIcon.setImageBitmap(bmp);
+                            }
+                        } catch (Exception ignored) {}
+                    }
                 } else {
                     holder.ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
                 }
@@ -1408,10 +1428,6 @@ public class ScanActivity extends Activity {
                 @Override
                 public void onClick(View v) {
                     if (entry.isDirectory()) {
-                        if (entry.isUnreadable()) {
-                            Toast.makeText(ScanActivity.this, "תיקייה זו מסומנת כלא קריאה ולא ניתן לפתוח אותה.", Toast.LENGTH_SHORT).show();
-                            return;
-                        }
                         isSearching = false;
                         etSearch.setText("");
                         currentParentId = entry.getId();
@@ -1444,8 +1460,8 @@ public class ScanActivity extends Activity {
 
     private void showRawBytesHexDialog(RecoveredEntry entry) {
         int childrenParentIdCount = dbHelper.getChildrenCountForNode(entry.getId());
-        int childrenFirstClusterCount = dbHelper.getChildrenCountForFirstCluster(entry.getFirstCluster());
-        int childrenOffsetCount = dbHelper.getChildrenCountForOffset(entry.getOffset());
+        int childrenFoldersCount = dbHelper.getChildrenFoldersCountForNode(entry.getId());
+        int childrenFilesCount = dbHelper.getChildrenFilesCountForNode(entry.getId());
         int orphansCount = dbHelper.getOrphansCount();
 
         StringBuilder sb = new StringBuilder();
@@ -1455,10 +1471,14 @@ public class ScanActivity extends Activity {
         sb.append("• First Cluster: ").append(entry.getFirstCluster()).append("\n");
         sb.append("• Stored Offset: 0x").append(Long.toHexString(entry.getOffset())).append("\n\n");
 
-        sb.append("• Number of children where parent_id = node id: ").append(childrenParentIdCount).append("\n");
-        sb.append("• Number of children where parent_id = first_cluster: ").append(childrenFirstClusterCount).append("\n");
-        sb.append("• Number of children where parent_id = stored offset: ").append(childrenOffsetCount).append("\n");
-        sb.append("• Number of orphans in the whole table: ").append(orphansCount).append("\n\n");
+        if (entry.isDirectory()) {
+            sb.append("• Unreadable Flag: ").append(entry.isUnreadable() ? "YES (1)" : "NO (0)").append("\n");
+            sb.append("• Unreadable Reason: ").append(entry.getUnreadableReason() != null ? entry.getUnreadableReason() : "None").append("\n\n");
+        }
+
+        sb.append("• Children count (parent_id = node id): ").append(childrenParentIdCount)
+                .append(" (Folders: ").append(childrenFoldersCount).append(", Files: ").append(childrenFilesCount).append(")\n");
+        sb.append("• Orphans in DB: ").append(orphansCount).append("\n\n");
 
         sb.append("שם הקובץ: ").append(entry.getName()).append("\n");
         sb.append("נתיב: ").append(entry.getPath()).append("\n");

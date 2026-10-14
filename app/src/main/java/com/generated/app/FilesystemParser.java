@@ -207,13 +207,11 @@ public class FilesystemParser {
 
             AtomicLong nextId = new AtomicLong(1);
 
-            // 1) Create root entry with ID = 1, parent_id = 0
             long rootId = nextId.getAndIncrement();
             RecoveredEntry rootEntry = new RecoveredEntry(rootId, 0, "", "/", 0, 0, FileType.UNKNOWN, false, true, System.currentTimeMillis(), new byte[0], rootCluster);
             entries.add(rootEntry);
             batch.add(rootEntry);
 
-            // Queue holds work item: cluster to scan, parentNodeId
             class WorkItem {
                 final long cluster;
                 final long parentNodeId;
@@ -292,6 +290,7 @@ public class FilesystemParser {
                             }
 
                             boolean isUnreadableFolder = false;
+                            String unreadableReason = null;
                             if (item.isDir && item.firstCluster >= 2) {
                                 long subClusterOffset = clusterRegionStart + (item.firstCluster - 2) * clusterSize;
                                 if (subClusterOffset >= 0 && subClusterOffset + 32 <= source.getSize()) {
@@ -302,17 +301,27 @@ public class FilesystemParser {
                                         long dotCluster = ((long) ByteBuffer.wrap(dotEntryBuf, 20, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() << 16) |
                                                 (ByteBuffer.wrap(dotEntryBuf, 26, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF);
 
+                                        StringBuilder first11Hex = new StringBuilder();
+                                        for (int bIdx = 0; bIdx < 11 && bIdx < dotEntryBuf.length; bIdx++) {
+                                            first11Hex.append(String.format("%02X ", dotEntryBuf[bIdx]));
+                                        }
+
                                         if (!dotName.equals(".") || (dotAttr & 0x10) == 0 || dotCluster != item.firstCluster) {
                                             isUnreadableFolder = true;
                                             DiagnosticReporter.incrementUnreadableFolder();
+                                            unreadableReason = String.format(Locale.getDefault(),
+                                                    "Failed '.' check: expected dotName='.', dotAttr=0x10, dotCluster=%d. Actual dotName='%s', dotAttr=0x%X, dotCluster=%d. First 11 bytes: [%s]",
+                                                    item.firstCluster, dotName, dotAttr, dotCluster, first11Hex.toString().trim());
                                         }
                                     } else {
                                         isUnreadableFolder = true;
                                         DiagnosticReporter.incrementUnreadableFolder();
+                                        unreadableReason = "Failed to read first 32 bytes of subClusterOffset 0x" + Long.toHexString(subClusterOffset);
                                     }
                                 } else {
                                     isUnreadableFolder = true;
                                     DiagnosticReporter.incrementUnreadableFolder();
+                                    unreadableReason = "SubClusterOffset out of bounds: 0x" + Long.toHexString(subClusterOffset);
                                 }
                             }
 
@@ -328,10 +337,10 @@ public class FilesystemParser {
 
                             long modTime = decodeDosDateTime(item.dosDate, item.dosTime);
 
-                            // Assign every node its id BEFORE it is inserted using nextId
                             long assignedId = nextId.getAndIncrement();
                             RecoveredEntry entry = new RecoveredEntry(assignedId, parentNodeId, item.name, currentPath, fileDataOffset, item.size, type, false, item.isDir, modTime, flattenedRaw, item.firstCluster);
                             entry.setUnreadable(isUnreadableFolder);
+                            entry.setUnreadableReason(unreadableReason);
 
                             entries.add(entry);
                             batch.add(entry);
