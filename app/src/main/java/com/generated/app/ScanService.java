@@ -306,7 +306,6 @@ public class ScanService extends Service {
 
                     if (totalFiles == 0) {
                         DiagnosticReporter.log("Filesystem scan found no files, running deep scan");
-                        final long totalSourceSize = byteSource.getSize();
                         final long deepScanStartTime = System.currentTimeMillis();
 
                         carver.carve(byteSource, new CarverCallback() {
@@ -319,7 +318,11 @@ public class ScanService extends Service {
 
                                 String typeFolderName = FileType.safeName(carvedFile.getType());
                                 String fileName = "carved_" + carvedFile.getOffset() + "." + typeFolderName.toLowerCase();
+                                long assignedId = System.nanoTime() & 0x7FFFFFFFFFFL;
+                                long rootId = dbHelper.getRootId();
                                 RecoveredEntry entry = new RecoveredEntry(
+                                        assignedId,
+                                        rootId,
                                         fileName,
                                         "/Carved files/" + typeFolderName,
                                         carvedFile.getOffset(),
@@ -328,7 +331,8 @@ public class ScanService extends Service {
                                         false,
                                         false,
                                         System.currentTimeMillis(),
-                                        fileName.getBytes()
+                                        fileName.getBytes(),
+                                        0
                                 );
                                 List<RecoveredEntry> single = new ArrayList<>();
                                 single.add(entry);
