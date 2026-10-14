@@ -73,7 +73,7 @@ public class ScanActivity extends Activity {
     private Button btnSaveReport;
     private Button btnDeepScanNow;
     private Button btnErrorLog;
-    private Button btnTestRestore; // Item 4
+    private Button btnTestRestore;
     private ProgressBar progressBar;
     private Button btnCancel;
     private Button btnPauseResume;
@@ -135,6 +135,32 @@ public class ScanActivity extends Activity {
         }
     };
 
+    private final BroadcastReceiver restoreReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            try {
+                if (intent == null || intent.getAction() == null) return;
+                String action = intent.getAction();
+
+                if (RestoreService.ACTION_PROGRESS.equals(action)) {
+                    int percent = intent.getIntExtra("percent", 0);
+                    String eta = intent.getStringExtra("eta");
+                    tvStatus.setText("משחזר... (" + percent + "%) · " + eta);
+                    progressBar.setIndeterminate(false);
+                    progressBar.setProgress(percent);
+                } else if (RestoreService.ACTION_COMPLETED.equals(action)) {
+                    int success = intent.getIntExtra("success", 0);
+                    int failed = intent.getIntExtra("failed", 0);
+                    tvStatus.setText(String.format(Locale.getDefault(), "השחזור הסתיים: %d הצליחו, %d נכשלו", success, failed));
+                    progressBar.setProgress(100);
+                    showRestoreSummaryDialogAfterService(success, failed);
+                }
+            } catch (Exception e) {
+                DiagnosticReporter.logError(e, "Exception in restoreReceiver onReceive");
+            }
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -170,7 +196,11 @@ public class ScanActivity extends Activity {
 
         setupUI();
 
-        if (!ScanService.isScanRunning()) {
+        if (RestoreService.isRestoreRunning()) {
+            tvStatus.setText("משחזר קבצים... (" + RestoreService.getCurrentPercent() + "%) · " + RestoreService.getCurrentEtaText());
+            progressBar.setIndeterminate(false);
+            progressBar.setProgress(RestoreService.getCurrentPercent());
+        } else if (!ScanService.isScanRunning()) {
             startScanService();
         } else {
             lastBroadcastFiles = ScanService.getFilesCount();
@@ -496,7 +526,6 @@ public class ScanActivity extends Activity {
         btnR3.rightMargin = 4;
         reportButtonsLayout.addView(btnDeepScanNow, btnR3);
 
-        // Item 4: Test restore debug button
         btnTestRestore = new Button(this);
         btnTestRestore.setText("Test restore");
         btnTestRestore.setTextSize(11);
@@ -599,10 +628,16 @@ public class ScanActivity extends Activity {
         btnCancel.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Intent intent = new Intent(ScanActivity.this, ScanService.class);
-                intent.setAction(ScanService.ACTION_CANCEL);
-                startService(intent);
-                finish();
+                if (RestoreService.isRestoreRunning()) {
+                    Intent intent = new Intent(ScanActivity.this, RestoreService.class);
+                    intent.setAction(RestoreService.ACTION_CANCEL);
+                    startService(intent);
+                } else {
+                    Intent intent = new Intent(ScanActivity.this, ScanService.class);
+                    intent.setAction(ScanService.ACTION_CANCEL);
+                    startService(intent);
+                    finish();
+                }
             }
         });
 
@@ -803,10 +838,14 @@ public class ScanActivity extends Activity {
         IntentFilter filter = new IntentFilter();
         filter.addAction(ScanService.ACTION_PROGRESS);
         filter.addAction(ScanService.ACTION_COMPLETED);
+        filter.addAction(RestoreService.ACTION_PROGRESS);
+        filter.addAction(RestoreService.ACTION_COMPLETED);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
+            registerReceiver(restoreReceiver, filter, Context.RECEIVER_EXPORTED);
         } else {
             registerReceiver(scanReceiver, filter);
+            registerReceiver(restoreReceiver, filter);
         }
         if (!isSearching) reloadCurrentDirectoryFromDb();
     }
@@ -816,6 +855,7 @@ public class ScanActivity extends Activity {
         super.onPause();
         try {
             unregisterReceiver(scanReceiver);
+            unregisterReceiver(restoreReceiver);
         } catch (Exception ignored) {}
     }
 
@@ -826,7 +866,7 @@ public class ScanActivity extends Activity {
             Uri destUri = Uri.parse(savedUriStr);
             try {
                 getContentResolver().takePersistableUriPermission(destUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-                startRestoring(destUri, saveAll);
+                startRestoreService(destUri, saveAll);
                 return;
             } catch (Exception ignored) {}
         }
@@ -876,7 +916,7 @@ public class ScanActivity extends Activity {
                 if (isTestRestoreFlag) {
                     runTestRestore(treeUri);
                 } else {
-                    startRestoring(treeUri, saveAllModeFlag);
+                    startRestoreService(treeUri, saveAllModeFlag);
                 }
             }
         } else if (requestCode == REQUEST_CODE_SAVE_REPORT && resultCode == RESULT_OK) {
@@ -898,12 +938,23 @@ public class ScanActivity extends Activity {
         }
     }
 
+    private void startRestoreService(Uri treeUri, boolean saveAll) {
+        Toast.makeText(this, "מתחיל שחזור קבצים ברקע...", Toast.LENGTH_SHORT).show();
+        Intent intent = new Intent(this, RestoreService.class);
+        intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
+        intent.putExtra(RestoreService.EXTRA_SAVE_ALL, saveAll);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+    }
+
     private void runTestRestore(final Uri treeUri) {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    // Item 1: Get root with DocumentFileCompat.fromTreeUri (fixed fromTreeUri usage, avoiding raw TreeUri DocumentsContract violations)
                     DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(ScanActivity.this, treeUri);
                     if (rootDir == null || !rootDir.canWrite()) {
                         throw new Exception("Destination root directory is null or not writable.");
@@ -925,7 +976,6 @@ public class ScanActivity extends Activity {
                     String testFileName = "test_restore_" + sanitizeFileName(testEntry.getName());
                     String mimeType = getMimeTypeForFile(testFileName, testEntry.getType());
 
-                    // Item 1: Create file through DocumentFileCompat.createFile
                     DocumentFileCompat testFile = rootDir.createFile(mimeType, testFileName);
                     if (testFile == null) {
                         throw new Exception("Failed to create test file in destination tree.");
@@ -977,140 +1027,7 @@ public class ScanActivity extends Activity {
         }).start();
     }
 
-    private void startRestoring(final Uri treeUri, final boolean saveAll) {
-        Toast.makeText(this, "מתחיל שחזור קבצים ליעד שנבחר...", Toast.LENGTH_SHORT).show();
-
-        Thread restoreThread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                ContentResolver resolver = getContentResolver();
-                final List<String> errorLogs = new ArrayList<>();
-                lastFailedErrors.clear();
-                int[] successCount = new int[]{0};
-
-                List<RecoveredEntry> entriesToRestore = saveAll ? dbHelper.getAllEntriesForSaveAll() : dbHelper.getAllSelectedFiles();
-                
-                // Item 1: Get root with DocumentFileCompat.fromTreeUri
-                DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(ScanActivity.this, treeUri);
-                if (rootDir == null || !rootDir.canWrite()) {
-                    errorLogs.add("תקיית היעד אינה נגישה או שאין הרשאת כתיבה.");
-                    showRestoreSummaryAndDialog(0, entriesToRestore.size(), errorLogs);
-                    return;
-                }
-
-                for (RecoveredEntry entry : entriesToRestore) {
-                    try {
-                        saveNodeToDestinationUsingDocumentFile(resolver, rootDir, entry, successCount, errorLogs);
-                    } catch (Exception e) {
-                        String err = "שגיאת שחזור " + entry.getName() + ": " + e.getMessage();
-                        errorLogs.add(err);
-                        lastFailedErrors.add(entry.getName());
-                    }
-                }
-
-                final int finalSuccess = successCount[0];
-                final int finalFailed = errorLogs.size();
-
-                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                    @Override
-                    public void run() {
-                        showRestoreSummaryAndDialog(finalSuccess, finalFailed, errorLogs);
-                    }
-                });
-            }
-        });
-        restoreThread.start();
-    }
-
-    private void saveNodeToDestinationUsingDocumentFile(ContentResolver resolver, DocumentFileCompat rootDir, RecoveredEntry node, int[] successCount, List<String> errorLogs) {
-        try {
-            String path = node.getPath();
-            DocumentFileCompat currentParent = rootDir;
-
-            if (path != null && !path.equals("/")) {
-                String[] segments = path.split("/");
-                for (String seg : segments) {
-                    if (seg.isEmpty()) continue;
-                    // Item 1: Use findFile before creating folders/files to avoid duplicates
-                    DocumentFileCompat foundSub = currentParent.findFile(seg);
-                    if (foundSub != null) {
-                        currentParent = foundSub;
-                    } else {
-                        // Item 1: Create folders only through DocumentFile.createDirectory(name)
-                        DocumentFileCompat createdSub = currentParent.createDirectory(seg);
-                        if (createdSub != null) {
-                            currentParent = createdSub;
-                        } else {
-                            throw new Exception("Failed to create directory: " + seg);
-                        }
-                    }
-                }
-            }
-
-            if (node.isDirectory()) {
-                // Item 1: findFile before creating
-                DocumentFileCompat foundDir = currentParent.findFile(node.getName());
-                if (foundDir == null) {
-                    currentParent.createDirectory(node.getName());
-                }
-            } else {
-                String sanitizedName = sanitizeFileName(node.getName());
-                // Item 1: Use MimeTypeMap for MIME type from extension, "application/octet-stream" if unknown
-                String mimeType = getMimeTypeForFile(sanitizedName, node.getType());
-
-                // Item 2: Add numeric suffix before extension if two files in one folder end up with same name
-                String uniqueName = sanitizedName;
-                int suffix = 1;
-                while (currentParent.findFile(uniqueName) != null) {
-                    int dotIdx = sanitizedName.lastIndexOf('.');
-                    if (dotIdx > 0) {
-                        uniqueName = sanitizedName.substring(0, dotIdx) + "_" + suffix + sanitizedName.substring(dotIdx);
-                    } else {
-                        uniqueName = sanitizedName + "_" + suffix;
-                    }
-                    suffix++;
-                }
-
-                // Item 1: Create files only through DocumentFile.createFile(mimeType, name)
-                DocumentFileCompat targetFile = currentParent.createFile(mimeType, uniqueName);
-                if (targetFile == null) {
-                    throw new Exception("Failed to create document file: " + uniqueName);
-                }
-
-                // Item 1: Log if provider changes the name of created file
-                if (!uniqueName.equals(node.getName())) {
-                    DiagnosticReporter.log("Note: Provider renamed created file from " + node.getName() + " to " + uniqueName);
-                }
-
-                // Item 1: Write each file with contentResolver.openOutputStream(uri) in 256 KB chunks, flush/close in finally
-                try (OutputStream out = resolver.openOutputStream(targetFile.getUri())) {
-                    if (out == null) {
-                        throw new Exception("Could not open OutputStream for target URI.");
-                    }
-                    long remaining = node.getLength();
-                    long offset = node.getOffset();
-                    byte[] buf = new byte[262144]; // Item 1: 256 KB chunks
-                    while (remaining > 0) {
-                        int toRead = (int) Math.min(buf.length, remaining);
-                        int read = byteSource.readAt(offset, buf, toRead);
-                        if (read <= 0) break;
-                        out.write(buf, 0, read);
-                        offset += read;
-                        remaining -= read;
-                    }
-                    out.flush();
-                    successCount[0]++;
-                }
-            }
-        } catch (Exception e) {
-            errorLogs.add("נכשל שחזור " + node.getName() + ": " + e.getMessage());
-            lastFailedErrors.add(node.getName());
-            DiagnosticReporter.logError(e, "Restore file error for " + node.getName());
-        }
-    }
-
     private String getMimeTypeForFile(String fileName, FileType type) {
-        // Item 1: Use MimeTypeMap for MIME type from extension, "application/octet-stream" if unknown
         if (fileName != null && fileName.contains(".")) {
             String ext = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
             String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
@@ -1120,23 +1037,15 @@ public class ScanActivity extends Activity {
     }
 
     private String sanitizeFileName(String name) {
-        // Item 2: Sanitize "/" and control characters only at write time
         if (name == null) return "unnamed";
         return name.replaceAll("[/\\\\?%*:|<>\"]", "_");
     }
 
-    private void showRestoreSummaryAndDialog(int success, int failed, final List<String> errors) {
+    private void showRestoreSummaryDialogAfterService(int success, int failed) {
         StringBuilder sb = new StringBuilder();
         sb.append("סיכום תהליך שחזור:\n\n");
         sb.append("• שחזור בהצלחה: ").append(success).append(" קבצים\n");
         sb.append("• נכשלו בשחזור: ").append(failed).append(" פריטים\n\n");
-
-        if (!errors.isEmpty()) {
-            sb.append("פירוט שגיאות נבחרות:\n");
-            for (int i = 0; i < Math.min(15, errors.size()); i++) {
-                sb.append("• ").append(errors.get(i)).append("\n");
-            }
-        }
 
         TextView tv = new TextView(this);
         tv.setText(sb.toString());
@@ -1149,31 +1058,11 @@ public class ScanActivity extends Activity {
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
         sv.addView(tv);
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this)
                 .setTitle("דוח שחזור קבצים")
                 .setView(sv)
-                .setPositiveButton(android.R.string.ok, null);
-
-        // Item 3: "Retry failed files" button at the end of restore summary dialog
-        if (failed > 0) {
-            builder.setNegativeButton("נסה שנית קבצים שנכשלו", new android.content.DialogInterface.OnClickListener() {
-                @Override
-                public void onClick(android.content.DialogInterface dialog, int which) {
-                    retryFailedFiles();
-                }
-            });
-        }
-
-        builder.show();
-    }
-
-    private void retryFailedFiles() {
-        if (lastFailedErrors.isEmpty()) {
-            Toast.makeText(this, "אין קבצים נכשולים לניסיון חוזר", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        Toast.makeText(this, "מנסה לשחזר שנית קבצים שנכשלו...", Toast.LENGTH_SHORT).show();
-        checkAndPromptDestination(false);
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
     }
 
     private void runManualDeepScan() {

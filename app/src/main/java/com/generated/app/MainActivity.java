@@ -5,10 +5,12 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
@@ -29,6 +31,7 @@ import java.util.List;
 public class MainActivity extends Activity {
 
     private static final int REQUEST_CODE_OPEN_DOCUMENT = 1001;
+    private static final int REQUEST_CODE_POST_NOTIFICATIONS = 1002;
 
     private TextView tvFileName;
     private TextView tvFileSize;
@@ -41,7 +44,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Item 3: Global crash handler setup (Thread.setDefaultUncaughtExceptionHandler)
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread t, Throwable e) {
@@ -61,8 +63,8 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Item 3: Check if previous crash exists and show in a copyable dialog on next launch
         checkAndShowCrashDialog();
+        requestNotificationPermissionIfNeeded();
 
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
@@ -174,7 +176,7 @@ public class MainActivity extends Activity {
 
         TextView tvVersion = new TextView(this);
         String buildDateTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date());
-        tvVersion.setText("v0.3 build " + buildDateTime);
+        tvVersion.setText("v0.4 build " + buildDateTime);
         tvVersion.setTextSize(11);
         tvVersion.setTextColor(0xFF888888);
         FrameLayout.LayoutParams versionParams = new FrameLayout.LayoutParams(
@@ -232,6 +234,14 @@ public class MainActivity extends Activity {
         setContentView(rootContainer);
     }
 
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQUEST_CODE_POST_NOTIFICATIONS);
+            }
+        }
+    }
+
     private void checkAndShowCrashDialog() {
         File crashFile = new File(getFilesDir(), "last_crash.txt");
         if (crashFile.exists()) {
@@ -250,7 +260,7 @@ public class MainActivity extends Activity {
                 tv.setText(sb.toString());
                 tv.setTextSize(12);
                 tv.setTextColor(0xFF333333);
-                tv.setTextIsSelectable(true); // Item 3: Copyable dialog
+                tv.setTextIsSelectable(true);
                 int pad = (int) (12 * getResources().getDisplayMetrics().density);
                 tv.setPadding(pad, pad, pad, pad);
 

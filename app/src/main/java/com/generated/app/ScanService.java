@@ -12,10 +12,12 @@ import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -36,17 +38,19 @@ public class ScanService extends Service {
     private Carver carver;
     private Thread scanThread;
     private DatabaseHelper dbHelper;
+    private PowerManager.WakeLock wakeLock;
     private volatile boolean isPaused = false;
     private volatile boolean isCancelled = false;
 
     private static final AtomicInteger filesCount = new AtomicInteger(0);
     private static final AtomicInteger foldersCount = new AtomicInteger(0);
     private static final AtomicLong totalBytesScanned = new AtomicLong(0);
-    private static final AtomicInteger errorsCount = new AtomicInteger(0);
     private static volatile String currentFolderPath = "/";
     private static volatile boolean isScanRunning = false;
 
     private long lastBroadcastTime = 0;
+    private long lastNotificationUpdate = 0;
+    private long scanStartTime = 0;
 
     public static boolean isScanRunning() {
         return isScanRunning;
@@ -74,6 +78,12 @@ public class ScanService extends Service {
         super.onCreate();
         createNotificationChannel();
         dbHelper = DatabaseHelper.getInstance(this);
+
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SDRescue:ScanWakeLock");
+            wakeLock.acquire(4 * 60 * 60 * 1000L); // 4 hours max
+        }
     }
 
     @Override
@@ -83,11 +93,11 @@ public class ScanService extends Service {
                 String action = intent.getAction();
                 if (ACTION_PAUSE.equals(action)) {
                     isPaused = true;
-                    updateNotification("הסריקה מושהית...", 0);
+                    updateNotificationIndeterminate("הסריקה מושהית", 0);
                     return START_NOT_STICKY;
                 } else if (ACTION_RESUME.equals(action)) {
                     isPaused = false;
-                    updateNotification("מחלץ קבצים...", 0);
+                    updateNotificationIndeterminate("סורק את הכרטיס", 0);
                     return START_NOT_STICKY;
                 } else if (ACTION_CANCEL.equals(action)) {
                     isCancelled = true;
@@ -112,9 +122,9 @@ public class ScanService extends Service {
                 filesCount.set(0);
                 foldersCount.set(0);
                 totalBytesScanned.set(0);
-                errorsCount.set(0);
                 currentFolderPath = "/";
                 isScanRunning = true;
+                scanStartTime = System.currentTimeMillis();
 
                 try {
                     if (uri != null) {
@@ -145,7 +155,7 @@ public class ScanService extends Service {
 
                 if (byteSource != null) {
                     carver = new Carver();
-                    startForeground(NOTIFICATION_ID, createNotification("מחלץ קבצים...", 0));
+                    startForeground(NOTIFICATION_ID, createNotificationIndeterminate("סורק את הכרטיס", 0));
                     startScanThread();
                 } else {
                     isScanRunning = false;
@@ -168,6 +178,7 @@ public class ScanService extends Service {
                     "SD Rescue Scan Service",
                     NotificationManager.IMPORTANCE_LOW
             );
+            channel.setSound(null, null);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);
@@ -175,9 +186,13 @@ public class ScanService extends Service {
         }
     }
 
-    private Notification createNotification(String text, int progress) {
+    private Notification createNotificationIndeterminate(String title, int dummy) {
         Intent notificationIntent = new Intent(this, ScanActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE);
+
+        Intent cancelIntent = new Intent(this, ScanService.class);
+        cancelIntent.setAction(ACTION_CANCEL);
+        PendingIntent cancelPendingIntent = PendingIntent.getService(this, 0, cancelIntent, PendingIntent.FLAG_IMMUTABLE);
 
         Notification.Builder builder;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -186,22 +201,64 @@ public class ScanService extends Service {
             builder = new Notification.Builder(this);
         }
 
-        builder.setContentTitle(getString(R.string.app_name))
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_menu_search)
-                .setContentIntent(pendingIntent);
+        long elapsedSec = (System.currentTimeMillis() - scanStartTime) / 1000;
+        String elapsedStr = String.format(Locale.getDefault(), "%02d:%02d", elapsedSec / 60, elapsedSec % 60);
+        String contentText = String.format(Locale.getDefault(), "נמצאו %d תיקיות ו-%d קבצים · זמן שעבר: %s", foldersCount.get(), filesCount.get(), elapsedStr);
 
-        if (progress > 0) {
-            builder.setProgress(100, progress, false);
-        }
+        builder.setContentTitle(title)
+                .setContentText(contentText)
+                .setSmallIcon(android.R.drawable.ic_menu_search)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setProgress(0, 0, true) // Indeterminate for filesystem scan
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "ביטול", cancelPendingIntent);
 
         return builder.build();
     }
 
-    private void updateNotification(String text, int progress) {
+    private Notification createNotificationDeterminate(int percent, double speedMbSec, long etaSec) {
+        Intent notificationIntent = new Intent(this, ScanActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE);
+
+        Intent cancelIntent = new Intent(this, ScanService.class);
+        cancelIntent.setAction(ACTION_CANCEL);
+        PendingIntent cancelPendingIntent = PendingIntent.getService(this, 0, cancelIntent, PendingIntent.FLAG_IMMUTABLE);
+
+        Notification.Builder builder;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new Notification.Builder(this, CHANNEL_ID);
+        } else {
+            builder = new Notification.Builder(this);
+        }
+
+        long etaMin = Math.max(1, etaSec / 60);
+        String subText = String.format(Locale.getDefault(), "%.1f MB/s · נשארו כ-%d דקות", speedMbSec, etaMin);
+
+        builder.setContentTitle("סורק את הכרטיס (סריקה עמוקה)")
+                .setContentText(String.format(Locale.getDefault(), "התקדמות: %d%%", percent))
+                .setSubText(subText)
+                .setSmallIcon(android.R.drawable.ic_menu_search)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setProgress(100, percent, false)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "ביטול", cancelPendingIntent);
+
+        return builder.build();
+    }
+
+    private void updateNotificationIndeterminate(String title, int dummy) {
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
-            manager.notify(NOTIFICATION_ID, createNotification(text, progress));
+            manager.notify(NOTIFICATION_ID, createNotificationIndeterminate(title, dummy));
+        }
+    }
+
+    private void updateNotificationDeterminate(int percent, double speedMbSec, long etaSec) {
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) {
+            manager.notify(NOTIFICATION_ID, createNotificationDeterminate(percent, speedMbSec, etaSec));
         }
     }
 
@@ -223,6 +280,7 @@ public class ScanService extends Service {
                                     }
                                 }
                                 throttleBroadcast(currentFolderPath);
+                                throttleNotificationIndeterminate();
                             }
                         }
 
@@ -235,6 +293,7 @@ public class ScanService extends Service {
                                 currentFolderPath = currentFolder;
                             }
                             throttleBroadcast(currentFolderPath);
+                            throttleNotificationIndeterminate();
                         }
                     });
 
@@ -247,6 +306,9 @@ public class ScanService extends Service {
 
                     if (totalFiles == 0) {
                         DiagnosticReporter.log("Filesystem scan found no files, running deep scan");
+                        final long totalSourceSize = byteSource.getSize();
+                        final long deepScanStartTime = System.currentTimeMillis();
+
                         carver.carve(byteSource, new CarverCallback() {
                             @Override
                             public void onFileFound(CarvedFile carvedFile) {
@@ -278,7 +340,13 @@ public class ScanService extends Service {
                             @Override
                             public void onProgress(long bytesScanned, long totalBytes) {
                                 int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
-                                updateNotification("סריקה עמוקה: " + percent + "%", percent);
+                                long elapsedMs = System.currentTimeMillis() - deepScanStartTime;
+                                double speedBytesPerSec = elapsedMs > 500 ? (bytesScanned * 1000.0) / elapsedMs : 0;
+                                double speedMbSec = speedBytesPerSec / (1024.0 * 1024.0);
+                                long remainingBytes = totalBytes - bytesScanned;
+                                long etaSec = speedBytesPerSec > 1024 ? (long) (remainingBytes / speedBytesPerSec) : 0;
+
+                                throttleNotificationDeterminate(percent, speedMbSec, etaSec);
                                 throttleBroadcast("סריקה עמוקה (Carving)");
                             }
                         });
@@ -312,6 +380,22 @@ public class ScanService extends Service {
         }
     }
 
+    private synchronized void throttleNotificationIndeterminate() {
+        long now = System.currentTimeMillis();
+        if (now - lastNotificationUpdate >= 500) {
+            lastNotificationUpdate = now;
+            updateNotificationIndeterminate("סורק את הכרטיס", 0);
+        }
+    }
+
+    private synchronized void throttleNotificationDeterminate(int percent, double speedMbSec, long etaSec) {
+        long now = System.currentTimeMillis();
+        if (now - lastNotificationUpdate >= 500) {
+            lastNotificationUpdate = now;
+            updateNotificationDeterminate(percent, speedMbSec, etaSec);
+        }
+    }
+
     private void broadcastProgress(String currentFolder, int files, int folders) {
         Intent intent = new Intent(ACTION_PROGRESS);
         intent.putExtra("files_count", files);
@@ -336,6 +420,11 @@ public class ScanService extends Service {
         }
         if (byteSource != null) {
             byteSource.close();
+        }
+        if (wakeLock != null && wakeLock.isHeld()) {
+            try {
+                wakeLock.release();
+            } catch (Exception ignored) {}
         }
     }
 }
