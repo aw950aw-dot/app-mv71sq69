@@ -655,6 +655,11 @@ public class RestoreService extends Service {
             } catch (Exception ignored) {}
         }
 
+        // Rule upgrade request: After a restore finishes successfully, clear selection (selected = 0 in DB). If restore fails, keep selection.
+        if (failed == 0 && success > 0) {
+            dbHelper.setAllSelected(false);
+        }
+
         ServiceState.getInstance().update(ServiceState.Phase.RESTORE_COMPLETED, success, 0, currentBytesRestored, "", 100, "", "");
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
