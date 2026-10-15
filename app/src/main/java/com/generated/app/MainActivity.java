@@ -2,6 +2,7 @@ package com.generated.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -54,7 +55,6 @@ public class MainActivity extends Activity {
                 }
 
                 if (detachedDevice != null && currentUsbDevice != null && detachedDevice.getDeviceId() == currentUsbDevice.getDeviceId()) {
-                    // Stop any ongoing scan or restore cleanly
                     if (ScanService.isScanRunning()) {
                         Intent stopScan = new Intent(MainActivity.this, ScanService.class);
                         stopScan.setAction(ScanService.ACTION_CANCEL);
@@ -412,7 +412,6 @@ public class MainActivity extends Activity {
             
             UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
             if (!usbManager.hasPermission(device)) {
-                // Request permission if missing despite system dialog grant
                 Intent broadcastIntent = new Intent("com.generated.app.USB_PERMISSION");
                 broadcastIntent.setPackage(getPackageName());
                 int flags = PendingIntent.FLAG_UPDATE_CURRENT;
