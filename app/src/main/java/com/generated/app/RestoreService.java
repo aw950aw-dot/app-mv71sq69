@@ -655,7 +655,7 @@ public class RestoreService extends Service {
             } catch (Exception ignored) {}
         }
 
-        // Rule upgrade request: After a restore finishes successfully, clear selection (selected = 0 in DB). If restore fails, keep selection.
+        // Updated requirement: After a restore finishes successfully (failed == 0), clear selection (selected = 0 in DB). If restore fails, keep selection.
         if (failed == 0 && success > 0) {
             dbHelper.setAllSelected(false);
         }
