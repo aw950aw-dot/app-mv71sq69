@@ -85,11 +85,20 @@ public class CategoryFilesActivity extends Activity {
 
         int pad = (int) (12 * getResources().getDisplayMetrics().density);
 
+        // Content wrapper with height 0 and weight 1 so RestoreProgressBarView stays visible at the bottom
+        LinearLayout contentContainer = new LinearLayout(this);
+        contentContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(contentContainer, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1.0f
+        ));
+
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.VERTICAL);
         topBar.setPadding(pad, pad, pad, pad);
         topBar.setBackgroundColor(0xFFFFFFFF);
-        root.addView(topBar, new LinearLayout.LayoutParams(
+        contentContainer.addView(topBar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
@@ -184,7 +193,7 @@ public class CategoryFilesActivity extends Activity {
         ));
 
         FrameLayout listContainer = new FrameLayout(this);
-        root.addView(listContainer, new LinearLayout.LayoutParams(
+        contentContainer.addView(listContainer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1.0f
@@ -212,7 +221,7 @@ public class CategoryFilesActivity extends Activity {
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(pad, pad, pad, pad);
         bottomBar.setBackgroundColor(0xFFFFFFFF);
-        root.addView(bottomBar, new LinearLayout.LayoutParams(
+        contentContainer.addView(bottomBar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
@@ -226,7 +235,7 @@ public class CategoryFilesActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        // Add RestoreProgressBarView at the bottom of root layout
+        // Add RestoreProgressBarView pinned at the bottom of the root layout
         RestoreProgressBarView restoreProgressBarView = new RestoreProgressBarView(this);
         root.addView(restoreProgressBarView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,

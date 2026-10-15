@@ -3,13 +3,30 @@
     android:height="96dp"
     android:viewportWidth="96"
     android:viewportHeight="96">
-    
+
+    <!-- Squircle Background -->
     <path
-        android:fillColor="#1976D2"
-        android:pathData="M16,8h64a8,8 0 0,1 8,8v64a8,8 0 0,1 -8,8H16a8,8 0 0,1 -8,-8V16a8,8 0 0,1 8,-8z" />
-        
+        android:fillColor="#1565C0"
+        android:pathData="M24,8h48c10,0 16,6 16,16v48c0,10 -6,16 -16,16H24c-10,0 -16,-6 -16,-16V24c0,-10 6,-16 16,-16z" />
+
+    <!-- SD Card Body -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M48,28c-11.05,0 -20,8.95 -20,20 0,4.42 1.45,8.5 3.91,11.76L28,70h12v-6h16v6h12l-3.91,-10.24C66.55,56.5 68,52.42 68,48c0,-11.05 -8.95,-20 -20,-20zM48,34c7.73,0 14,6.27 14,14s-6.27,14 -14,14 -14,-6.27 -14,-14 6.27,-14 14,-14z" />
-        
+        android:pathData="M32,20h26l12,12v40c0,2.2 -1.8,4 -4,4H30c-2.2,0 -4,-1.8 -4,-4V24c0,-2.2 1.8,-4 4,-4z" />
+
+    <!-- Gold Pin Contacts -->
+    <path
+        android:fillColor="#FFA000"
+        android:pathData="M34,22h4v8h-4z M41,22h4v8h-4z M48,22h4v8h-4z" />
+
+    <!-- Rescue Cross / First-Aid Symbol on SD Card -->
+    <path
+        android:fillColor="#1976D2"
+        android:pathData="M44,40h8v8h8v8h-8v8h-8v-8h-8v-8h8z" />
+
+    <!-- High-visibility accent badge: data pulse dot -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M64,68a4,4 0 1,0 8,0a4,4 0 1,0 -8,0" />
+
 </vector>

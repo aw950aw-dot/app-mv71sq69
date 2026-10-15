@@ -76,6 +76,7 @@ public class RestoreService extends Service {
     public static String getCurrentFileName() { return currentFileName; }
     public static int getCurrentPercent() { return currentPercent; }
     public static String getCurrentEtaText() { return currentEtaText; }
+    public static long getCurrentRemainingSec() { return currentRemainingSec; }
 
     @Override
     public IBinder onBind(Intent intent) {
