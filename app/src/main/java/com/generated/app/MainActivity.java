@@ -353,7 +353,6 @@ public class MainActivity extends Activity {
                 SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
                 prefs.edit().putBoolean(PREF_HAS_SAVED_SCAN, false).apply();
                 cardPreviousScanContainer.setVisibility(View.GONE);
-                Toast.init(MainActivity.this);
                 Toast.makeText(MainActivity.this, "הנתונים הקודמים נוקו, מוכן לסריקה חדשה", Toast.LENGTH_SHORT).show();
             }
         });
