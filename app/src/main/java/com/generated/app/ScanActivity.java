@@ -105,7 +105,6 @@ public class ScanActivity extends Activity {
     private int lastBroadcastFolders = 0;
 
     private boolean saveAllModeFlag = false;
-    private boolean isTestRestoreFlag = false;
 
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private Runnable searchRunnable;
@@ -373,7 +372,7 @@ public class ScanActivity extends Activity {
                     ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                     if (clipboard != null) {
                         clipboard.setPrimaryClip(ClipData.newPlainText("Scan Report", report));
-                        Toast.ManagerCompatShow(ScanActivity.this, "הדוח הועתק ללוח");
+                        Toast.makeText(ScanActivity.this, "הדוח הועתק ללוח", Toast.LENGTH_SHORT).show();
                     }
                 } catch (Exception ignored) {}
             }
