@@ -101,6 +101,7 @@ public class RestoreService extends Service {
             if (ACTION_CANCEL.equals(action)) {
                 isCancelled = true;
                 isRestoreRunning = false;
+                ServiceState.getInstance().update(ServiceState.Phase.CANCELLED, restoredFilesCount, 0, currentBytesRestored, currentFileName, currentPercent, currentEtaText, "שחזור בוטל");
                 if (restoreThread != null) restoreThread.interrupt();
                 stopSelf();
                 return START_NOT_STICKY;
@@ -128,6 +129,8 @@ public class RestoreService extends Service {
                     int[] stats = dbHelper.getRestoreQueueStats();
                     restoredFilesCount = stats[0];
                 }
+
+                ServiceState.getInstance().update(ServiceState.Phase.RESTORING, restoredFilesCount, 0, currentBytesRestored, "", 0, "מתחיל שחזור...", "");
 
                 if (wakeLock != null && !wakeLock.isHeld()) {
                     wakeLock.acquire(4 * 60 * 60 * 1000L);
@@ -164,6 +167,7 @@ public class RestoreService extends Service {
                     String errMsg = "שגיאה בפתיחת מקור הקריאה לשחזור: " + e.getMessage();
                     isRestoreRunning = false;
                     updateNotification(errMsg, 0, "שחזור נכשל");
+                    ServiceState.getInstance().update(ServiceState.Phase.IDLE, restoredFilesCount, 0, currentBytesRestored, "", 0, "", errMsg);
                     List<String> errs = new ArrayList<>();
                     errs.add(errMsg);
                     finishRestore(0, 1, 0, errs);
@@ -383,7 +387,6 @@ public class RestoreService extends Service {
                     }
 
                     if (shouldRestore) {
-                        // If resuming, skip files that already have restoreStatus == 1 (done)
                         if (isResume && fileEntry.getRestoreStatus() == 1) {
                             continue;
                         }
@@ -444,10 +447,10 @@ public class RestoreService extends Service {
                             currentBytesRestored += entry.getLength();
                             bytesSinceLastHistory += entry.getLength();
                         }
-                        dbHelper.updateRestoreStatus(entry.getId(), 1); // Mark as done
+                        dbHelper.updateRestoreStatus(entry.getId(), 1);
                     } catch (Exception e) {
                         failedFilesCount++;
-                        dbHelper.updateRestoreStatus(entry.getId(), 2); // Mark as failed
+                        dbHelper.updateRestoreStatus(entry.getId(), 2);
                         String errInfo = "נכשל " + entry.getName() + " (Offset: 0x" + Long.toHexString(entry.getOffset()) + "): " + e.getMessage();
                         errorLogs.add(errInfo);
                         recordFailureCause(e.getMessage());
@@ -484,6 +487,8 @@ public class RestoreService extends Service {
 
                     currentEtaText = String.format(Locale.getDefault(), "קבצים %d מתוך %d · %.2f GB מתוך %.2f GB · נשארו כ-%d דקות",
                             (restoredFilesCount + skippedExistingFilesCount + failedFilesCount), totalFilesCount, gbRestored, gbTotal, remainingMin);
+
+                    ServiceState.getInstance().update(ServiceState.Phase.RESTORING, restoredFilesCount, 0, currentBytesRestored, currentFileName, currentPercent, currentEtaText, "");
 
                     if (now - lastNotificationUpdate >= 500) {
                         lastNotificationUpdate = now;
@@ -649,6 +654,8 @@ public class RestoreService extends Service {
                 wakeLock.release();
             } catch (Exception ignored) {}
         }
+
+        ServiceState.getInstance().update(ServiceState.Phase.RESTORE_COMPLETED, success, 0, currentBytesRestored, "", 100, "", "");
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {

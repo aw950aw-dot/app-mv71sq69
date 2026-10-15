@@ -58,7 +58,6 @@ public class ScanActivity extends Activity {
     private String usbDeviceName;
     private DatabaseHelper dbHelper;
 
-    // Views for Mode 1: Scanning screen
     private LinearLayout layoutScanScreen;
     private TextView tvScanStatus;
     private TextView tvScanLiveCounters;
@@ -70,7 +69,6 @@ public class ScanActivity extends Activity {
     private Button btnCopyReportScan;
     private Button btnSaveReportScan;
 
-    // Views for Mode 2: Results dashboard screen
     private LinearLayout layoutResultsDashboard;
     private LinearLayout topBarResults;
     private Button btnSearchToggle;
@@ -80,7 +78,6 @@ public class ScanActivity extends Activity {
     private LinearLayout categoriesGridContainer;
     private LinearLayout cardBrowseFolders;
 
-    // Views for Mode 3: Folder browser screen
     private LinearLayout layoutFolderBrowser;
     private LinearLayout layoutBreadcrumb;
     private EditText etSearchBrowser;
@@ -172,18 +169,20 @@ public class ScanActivity extends Activity {
             scanStartTime = System.currentTimeMillis();
             buildAllUiScreens();
 
-            if (RestoreService.isRestoreRunning()) {
+            // Read service state immediately on startup/reopen
+            ServiceState state = ServiceState.getInstance();
+            if (state.getPhase() == ServiceState.Phase.RESTORING || RestoreService.isRestoreRunning()) {
                 switchUiMode(1);
-                tvScanStatus.setText("משחזר קבצים... (" + RestoreService.getCurrentPercent() + "%)");
-            } else if (ScanService.isScanRunning()) {
+                tvScanStatus.setText("משחזר קבצים... (" + state.getPercent() + "%)");
+            } else if (state.getPhase() == ServiceState.Phase.SCANNING || ScanService.isScanRunning()) {
                 switchUiMode(1);
-                lastBroadcastFiles = ScanService.getFilesCount();
-                lastBroadcastFolders = ScanService.getFoldersCount();
-                updateScanCountersAndStatus(lastBroadcastFiles, lastBroadcastFolders, ScanService.getCurrentFolderPath());
+                lastBroadcastFiles = state.getFilesCount();
+                lastBroadcastFolders = state.getFoldersCount();
+                updateScanCountersAndStatus(lastBroadcastFiles, lastBroadcastFolders, state.getCurrentFolder());
             } else {
                 int totalFiles = dbHelper.getTotalFilesCount();
                 int totalFolders = dbHelper.getTotalFoldersCount();
-                if (totalFiles > 0 || totalFolders > 0) {
+                if (totalFiles > 0 || totalFolders > 0 || state.getPhase() == ServiceState.Phase.SCAN_COMPLETED) {
                     switchUiMode(2);
                 } else {
                     switchUiMode(1);
@@ -224,7 +223,6 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
         root.setBackgroundColor(0xFFF8F9FA);
 
-        // 1. SCAN SCREEN CONTAINER
         layoutScanScreen = new LinearLayout(this);
         layoutScanScreen.setOrientation(LinearLayout.VERTICAL);
         layoutScanScreen.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -376,7 +374,6 @@ public class ScanActivity extends Activity {
             } catch (Exception ignored) {}
         });
 
-        // 2. RESULTS DASHBOARD CONTAINER
         layoutResultsDashboard = new LinearLayout(this);
         layoutResultsDashboard.setOrientation(LinearLayout.VERTICAL);
         layoutResultsDashboard.setLayoutParams(new LinearLayout.LayoutParams(
@@ -501,7 +498,6 @@ public class ScanActivity extends Activity {
             reloadCurrentDirectoryFromDb();
         });
 
-        // 3. FOLDER BROWSER CONTAINER
         layoutFolderBrowser = new LinearLayout(this);
         layoutFolderBrowser.setOrientation(LinearLayout.VERTICAL);
         layoutFolderBrowser.setLayoutParams(new LinearLayout.LayoutParams(
