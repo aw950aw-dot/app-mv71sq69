@@ -38,6 +38,7 @@ public class MainActivity extends Activity {
     private static final int REQUEST_CODE_OPEN_DOCUMENT = 1001;
     private static final int REQUEST_CODE_POST_NOTIFICATIONS = 1002;
     private static final String PREF_BATTERY_DIALOG_SHOWN = "pref_battery_dialog_shown";
+    private static final String PREF_DEST_URI = "pref_dest_uri";
 
     private TextView tvFileName;
     private TextView tvFileSize;
