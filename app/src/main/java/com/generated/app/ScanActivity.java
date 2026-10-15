@@ -24,6 +24,7 @@ import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -668,12 +669,12 @@ public class ScanActivity extends Activity {
         new Thread(() -> {
             Map<String, long[]> statsMap = dbHelper.getCategoryStats();
             List<CatCardInfo> cats = new ArrayList<>();
-            cats.add(new CatCardInfo(FileCategory.PHOTOS, "תמונות (Photos)", "🖼️", statsMap));
-            cats.add(new CatCardInfo(FileCategory.VIDEOS, "סרטונים (Videos)", "🎬", statsMap));
-            cats.add(new CatCardInfo(FileCategory.MUSIC, "מוזיקה ואודיו (Music)", "🎵", statsMap));
-            cats.add(new CatCardInfo(FileCategory.DOCUMENTS, "מסמכים (Documents)", "📄", statsMap));
-            cats.add(new CatCardInfo(FileCategory.ARCHIVES_APPS, "ארכיונים ואפליקציות", "📦", statsMap));
-            cats.add(new CatCardInfo(FileCategory.OTHER, "אחר (Other)", "📁", statsMap));
+            cats.add(new CatCardInfo(FileCategory.PHOTOS, "תמונות (Photos)", R.drawable.ic_photos, statsMap));
+            cats.add(new CatCardInfo(FileCategory.VIDEOS, "סרטונים (Videos)", R.drawable.ic_videos, statsMap));
+            cats.add(new CatCardInfo(FileCategory.MUSIC, "מוזיקה ואודיו (Music)", R.drawable.ic_music, statsMap));
+            cats.add(new CatCardInfo(FileCategory.DOCUMENTS, "מסמכים (Documents)", R.drawable.ic_documents, statsMap));
+            cats.add(new CatCardInfo(FileCategory.ARCHIVES_APPS, "ארכיונים ואפליקציות", R.drawable.ic_archive, statsMap));
+            cats.add(new CatCardInfo(FileCategory.OTHER, "אחר (Other)", R.drawable.ic_other, statsMap));
 
             new Handler(Looper.getMainLooper()).post(() -> {
                 dashboardLoadingProgress.setVisibility(View.GONE);
@@ -712,13 +713,13 @@ public class ScanActivity extends Activity {
     private static class CatCardInfo {
         final String key;
         final String name;
-        final String emoji;
+        final int iconResId;
         final long count;
         final long size;
-        CatCardInfo(String key, String name, String emoji, Map<String, long[]> statsMap) {
+        CatCardInfo(String key, String name, int iconResId, Map<String, long[]> statsMap) {
             this.key = key;
             this.name = name;
-            this.emoji = emoji;
+            this.iconResId = iconResId;
             long[] val = statsMap.get(key);
             this.count = val != null ? val[0] : 0;
             this.size = val != null ? val[1] : 0;
@@ -732,13 +733,23 @@ public class ScanActivity extends Activity {
         card.setPadding(pad, pad, pad, pad);
         card.setBackgroundColor(0xFFFFFFFF);
 
-        TextView tvEmoji = new TextView(this);
-        tvEmoji.setText(cat.emoji);
-        tvEmoji.setTextSize(24);
-        LinearLayout.LayoutParams eLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        eLp.bottomMargin = 8;
-        card.addView(tvEmoji, eLp);
+        FrameLayout iconFrame = new FrameLayout(this);
+        iconFrame.setBackgroundResource(R.drawable.circle_background);
+        int frameSize = (int) (48 * getResources().getDisplayMetrics().density);
+        LinearLayout.LayoutParams fLp = new LinearLayout.LayoutParams(frameSize, frameSize);
+        fLp.bottomMargin = 10;
+        iconFrame.setLayoutParams(fLp);
+
+        ImageView ivIcon = new ImageView(this);
+        ivIcon.setImageResource(cat.iconResId);
+        ivIcon.setColorFilter(0xFF1976D2);
+        int iconSize = (int) (24 * getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams iLp = new FrameLayout.LayoutParams(iconSize, iconSize);
+        iLp.gravity = Gravity.CENTER;
+        ivIcon.setLayoutParams(iLp);
+        iconFrame.addView(ivIcon);
+
+        card.addView(iconFrame);
 
         TextView tvName = new TextView(this);
         tvName.setText(cat.name);
