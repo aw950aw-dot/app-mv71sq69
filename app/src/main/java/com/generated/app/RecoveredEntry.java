@@ -20,6 +20,7 @@ public class RecoveredEntry {
     private boolean isUnreadable;
     private String unreadableReason;
     private int restoreStatus; // 0=pending, 1=done, 2=failed
+    private String category;
 
     public RecoveredEntry(long id, long parentId, String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes, long firstCluster) {
         this.id = id;
@@ -38,6 +39,7 @@ public class RecoveredEntry {
         this.isUnreadable = false;
         this.unreadableReason = null;
         this.restoreStatus = 0;
+        this.category = FileCategory.determineCategory(this.name, this.isDirectory);
     }
 
     public RecoveredEntry(String name, String path, long offset, long length, FileType type, boolean isDeleted, boolean isDirectory, long modifiedTime, byte[] rawNameBytes, long firstCluster) {
@@ -146,5 +148,13 @@ public class RecoveredEntry {
 
     public void setRestoreStatus(int restoreStatus) {
         this.restoreStatus = restoreStatus;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public void setCategory(String category) {
+        this.category = category;
     }
 }
