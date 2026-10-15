@@ -24,6 +24,7 @@ import android.os.StrictMode;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -170,8 +171,8 @@ public class MainActivity extends Activity {
         topBar.addView(tvTitle, titleLp);
 
         Button btnHelp = new Button(this);
-        btnHelp.setText("❓");
-        btnHelp.setTextSize(16);
+        btnHelp.setText("מדריך");
+        btnHelp.setTextSize(14);
         btnHelp.setTextColor(0xFF1976D2);
         btnHelp.setBackgroundColor(0x00000000);
         btnHelp.setOnClickListener(new View.OnClickListener() {
@@ -181,13 +182,13 @@ public class MainActivity extends Activity {
             }
         });
         topBar.addView(btnHelp, new LinearLayout.LayoutParams(
-                (int)(48 * getResources().getDisplayMetrics().density),
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 (int)(48 * getResources().getDisplayMetrics().density)
         ));
 
         Button btnSettings = new Button(this);
-        btnSettings.setText("⚙️");
-        btnSettings.setTextSize(16);
+        btnSettings.setText("הגדרות");
+        btnSettings.setTextSize(14);
         btnSettings.setTextColor(0xFF1976D2);
         btnSettings.setBackgroundColor(0x00000000);
         btnSettings.setOnClickListener(new View.OnClickListener() {
@@ -197,7 +198,7 @@ public class MainActivity extends Activity {
             }
         });
         topBar.addView(btnSettings, new LinearLayout.LayoutParams(
-                (int)(48 * getResources().getDisplayMetrics().density),
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 (int)(48 * getResources().getDisplayMetrics().density)
         ));
 
@@ -226,6 +227,14 @@ public class MainActivity extends Activity {
         );
         cardLp.bottomMargin = padding;
         contentContainer.addView(cardStatusContainer, cardLp);
+
+        ImageView ivCardIcon = new ImageView(this);
+        ivCardIcon.setImageResource(R.drawable.ic_sd_card);
+        ivCardIcon.setColorFilter(0xFF1976D2);
+        int iconSz = (int) (48 * getResources().getDisplayMetrics().density);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSz, iconSz);
+        iconLp.bottomMargin = 12;
+        cardStatusContainer.addView(ivCardIcon, iconLp);
 
         tvStatusTitle = new TextView(this);
         tvStatusTitle.setText(R.string.connect_card_prompt);
@@ -379,7 +388,6 @@ public class MainActivity extends Activity {
                 final String detailsText = String.format(Locale.getDefault(), "תאריך: %s\nמצא: %s, %s", dateStr, filesPlural, foldersPlural);
                 mainHandler.post(() -> {
                     if (cardPreviousScanContainer != null) {
-                        // Find TextView inside cardPreviousScanContainer if needed, or update text directly
                         for (int i = 0; i < cardPreviousScanContainer.getChildCount(); i++) {
                             View child = cardPreviousScanContainer.getChildAt(i);
                             if (child instanceof TextView && child != cardPreviousScanContainer.getChildAt(0)) {

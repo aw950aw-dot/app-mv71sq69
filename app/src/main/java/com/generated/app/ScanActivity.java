@@ -411,21 +411,23 @@ public class ScanActivity extends Activity {
         tvResTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         topBarResults.addView(tvResTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-        btnSearchToggle = new Button(this);
-        btnSearchToggle.setText("🔍");
-        btnSearchToggle.setTextSize(16);
+        Button btnSearchToggle = new Button(this);
+        ImageView ivSearch = new ImageView(this);
+        ivSearch.setImageResource(R.drawable.ic_search);
+        ivSearch.setColorFilter(0xFF1976D2);
         btnSearchToggle.setBackgroundColor(0x00000000);
+        btnSearchToggle.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
         topBarResults.addView(btnSearchToggle, new LinearLayout.LayoutParams(
                 (int)(48 * getResources().getDisplayMetrics().density),
                 (int)(48 * getResources().getDisplayMetrics().density)));
 
         btnMenuResults = new Button(this);
-        btnMenuResults.setText("⋮");
-        btnMenuResults.setTextSize(20);
+        btnMenuResults.setText("אפשרויות");
+        btnMenuResults.setTextSize(14);
         btnMenuResults.setTextColor(0xFF333333);
         btnMenuResults.setBackgroundColor(0x00000000);
         topBarResults.addView(btnMenuResults, new LinearLayout.LayoutParams(
-                (int)(48 * getResources().getDisplayMetrics().density),
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 (int)(48 * getResources().getDisplayMetrics().density)));
 
         etSearchDashboard = new EditText(this);
@@ -490,7 +492,8 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         cardBrowseFolders = new LinearLayout(this);
-        cardBrowseFolders.setOrientation(LinearLayout.VERTICAL);
+        cardBrowseFolders.setOrientation(LinearLayout.HORIZONTAL);
+        cardBrowseFolders.setGravity(Gravity.CENTER_VERTICAL);
         cardBrowseFolders.setPadding(pad, pad, pad, pad);
         cardBrowseFolders.setBackgroundColor(0xFFFFFFFF);
         LinearLayout.LayoutParams browseLp = new LinearLayout.LayoutParams(
@@ -498,21 +501,34 @@ public class ScanActivity extends Activity {
         browseLp.topMargin = pad;
         dashboardContent.addView(cardBrowseFolders, browseLp);
 
+        ImageView ivBrowseFolder = new ImageView(this);
+        ivBrowseFolder.setImageResource(R.drawable.ic_folder);
+        ivBrowseFolder.setColorFilter(0xFF1976D2);
+        int fSize = (int) (32 * getResources().getDisplayMetrics().density);
+        LinearLayout.LayoutParams fLp = new LinearLayout.LayoutParams(fSize, fSize);
+        fLp.rightMargin = pad;
+        cardBrowseFolders.addView(ivBrowseFolder, fLp);
+
+        LinearLayout browseTextLayout = new LinearLayout(this);
+        browseTextLayout.setOrientation(LinearLayout.VERTICAL);
+        cardBrowseFolders.addView(browseTextLayout, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+
         TextView tvBrowseTitle = new TextView(this);
-        tvBrowseTitle.setText("📁 עיון בכל התיקיות");
-        tvBrowseTitle.setTextSize(18);
+        tvBrowseTitle.setText("עיון בכל התיקיות");
+        tvBrowseTitle.setTextSize(16);
         tvBrowseTitle.setTextColor(0xFF1976D2);
         tvBrowseTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         LinearLayout.LayoutParams btParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        btParams.bottomMargin = 4;
-        cardBrowseFolders.addView(tvBrowseTitle, btParams);
+        btParams.bottomMargin = 2;
+        browseTextLayout.addView(tvBrowseTitle, btParams);
 
         TextView tvBrowseSub = new TextView(this);
-        tvBrowseSub.setText("צפה במבנה התיקיות המלא של הכרטיס ובחר קבצים בודדים לשחזור");
-        tvBrowseSub.setTextSize(13);
+        tvBrowseSub.setText("צפה במבנה התיקיות המלא של הכרטיס ובחר קבצים");
+        tvBrowseSub.setTextSize(12);
         tvBrowseSub.setTextColor(0xFF757575);
-        cardBrowseFolders.addView(tvBrowseSub);
+        browseTextLayout.addView(tvBrowseSub);
 
         cardBrowseFolders.setOnClickListener(v -> {
             switchUiMode(3);
@@ -847,7 +863,7 @@ public class ScanActivity extends Activity {
         layoutBreadcrumb.removeAllViews();
 
         TextView tvRoot = new TextView(this);
-        tvRoot.setText("📁 /");
+        tvRoot.setText("/");
         tvRoot.setTextSize(14);
         tvRoot.setTextColor(0xFF1976D2);
         tvRoot.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -1164,7 +1180,6 @@ public class ScanActivity extends Activity {
             TextView tvDetails;
 
             if (convertView == null) {
-                // Flat row layout with a single container to prevent nested layout performance overhead
                 itemLayout = new LinearLayout(ScanActivity.this);
                 itemLayout.setOrientation(LinearLayout.HORIZONTAL);
                 itemLayout.setGravity(Gravity.CENTER_VERTICAL);
@@ -1180,7 +1195,7 @@ public class ScanActivity extends Activity {
                         LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
                 ivIcon = new ImageView(ScanActivity.this);
-                int iconSize = (int) (36 * getResources().getDisplayMetrics().density);
+                int iconSize = (int) (32 * getResources().getDisplayMetrics().density);
                 LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(iconSize, iconSize);
                 imgParams.leftMargin = pad;
                 imgParams.rightMargin = pad;
@@ -1227,8 +1242,9 @@ public class ScanActivity extends Activity {
             });
 
             if (entry.isDirectory()) {
-                ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
-                tvName.setText("📁 " + entry.getName());
+                ivIcon.setImageResource(R.drawable.ic_folder);
+                ivIcon.setColorFilter(0xFF1976D2);
+                tvName.setText(entry.getName());
                 String folderDesc = String.format(Locale.getDefault(), "%d קבצים • %s", entry.getCachedRecursiveFileCount(), formatSize(entry.getCachedRecursiveSize()));
                 tvDetails.setText(folderDesc);
             } else {
@@ -1236,8 +1252,16 @@ public class ScanActivity extends Activity {
                 String dateStr = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(new Date(entry.getModifiedTime()));
                 tvDetails.setText("גודל: " + formatSize(entry.getLength()) + " • " + dateStr);
 
-                ivIcon.setImageBitmap(null);
-                ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
+                String cat = entry.getCategory();
+                int iconRes = R.drawable.ic_other;
+                if (FileCategory.PHOTOS.equals(cat)) iconRes = R.drawable.ic_photos;
+                else if (FileCategory.VIDEOS.equals(cat)) iconRes = R.drawable.ic_videos;
+                else if (FileCategory.MUSIC.equals(cat)) iconRes = R.drawable.ic_music;
+                else if (FileCategory.DOCUMENTS.equals(cat)) iconRes = R.drawable.ic_documents;
+                else if (FileCategory.ARCHIVES_APPS.equals(cat)) iconRes = R.drawable.ic_archive;
+
+                ivIcon.setImageResource(iconRes);
+                ivIcon.setColorFilter(0xFF1976D2);
             }
 
             itemLayout.setOnClickListener(v -> {
