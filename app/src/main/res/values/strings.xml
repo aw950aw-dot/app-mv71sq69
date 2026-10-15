@@ -9,12 +9,12 @@
     <string name="file_size_label">גודל המקור: </string>
     <string name="error_opening_file">שגיאה בפתיחת המקור</string>
     <string name="start_scan">התחל סריקה ושחזור</string>
-    <string name="scanning_title">סורק קבצים…</string>
+    <string name="scanning_title">סורק את הכרטיס...</string>
     <string name="cancel_scan">ביטול סריקה</string>
     <string name="pause_scan">השהה</string>
     <string name="resume_scan">המשך</string>
     <string name="scan_paused">הסריקה מושהית</string>
-    <string name="save_selected">שמור נבחרים</string>
+    <string name="save_selected">שחזר נבחרים</string>
     <string name="save_all">שמור הכל</string>
     <string name="select_all">בחר הכל</string>
     <string name="deselect_all">בטל בחירה</string>
