@@ -36,6 +36,14 @@
             android:stopWithTask="false" />
 
         <activity
+            android:name=".CategoryListActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".CategoryFilesActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".SettingsActivity"
             android:exported="false" />
 

@@ -71,6 +71,7 @@ public class ScanActivity extends Activity {
 
     private Button btnSaveSelected;
     private Button btnSaveAll;
+    private Button btnCategories;
 
     private LinearLayout headerContainer;
     private TextView tvStatus;
@@ -422,8 +423,20 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1.0f
         );
-        saveParams.rightMargin = 8;
+        saveParams.rightMargin = 4;
         bottomBar.addView(btnSaveSelected, saveParams);
+
+        btnCategories = new Button(this);
+        btnCategories.setText("קטגוריות");
+        btnCategories.setTextColor(0xFFFFFFFF);
+        btnCategories.setBackgroundColor(0xFF00838F);
+        LinearLayout.LayoutParams catParams = new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1.0f
+        );
+        catParams.rightMargin = 4;
+        bottomBar.addView(btnCategories, catParams);
 
         btnSaveAll = new Button(this);
         btnSaveAll.setText(R.string.save_all);
@@ -439,6 +452,13 @@ public class ScanActivity extends Activity {
             @Override
             public void onClick(View v) {
                 promptForSaveDirectory(false, false);
+            }
+        });
+
+        btnCategories.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(ScanActivity.this, CategoryListActivity.class));
             }
         });
 
@@ -984,7 +1004,6 @@ public class ScanActivity extends Activity {
                                 entryMap.put(e.getId(), e);
                             }
 
-                            // Determine top-level items and collect sample destination paths (up to 3)
                             List<RecoveredEntry> topLevelItems = new ArrayList<>();
                             for (RecoveredEntry e : allEntries) {
                                 boolean isSelected = saveAllModeFlag || e.isSelected() || e.isPartial();
@@ -1006,7 +1025,6 @@ public class ScanActivity extends Activity {
                                 }
                             }
 
-                            // Count total files and bytes
                             if (saveAllModeFlag) {
                                 for (RecoveredEntry e : allEntries) {
                                     if (!e.isDirectory()) {
@@ -1020,7 +1038,6 @@ public class ScanActivity extends Activity {
                                 bytes = stats[1];
                             }
 
-                            // Generate up to 3 sample paths that will be created directly under destination root
                             for (RecoveredEntry tl : topLevelItems) {
                                 if (samplePaths.size() < 3) {
                                     samplePaths.add("/" + sanitizeFileName(tl.getName()) + (tl.isDirectory() ? "/..." : ""));

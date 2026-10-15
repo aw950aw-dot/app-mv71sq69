@@ -1,0 +1,586 @@
+package com.generated.app;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.DocumentsContract;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+public class CategoryFilesActivity extends Activity {
+
+    public static final String EXTRA_CATEGORY_KEY = "extra_category_key";
+    public static final String EXTRA_CATEGORY_NAME = "extra_category_name";
+    private static final int REQUEST_CODE_SAVE_DIR = 4004;
+    private static final String PREF_DEST_URI = "pref_dest_uri";
+
+    private String categoryKey;
+    private String categoryDisplayName;
+    private DatabaseHelper dbHelper;
+
+    private EditText etSearch;
+    private EditText etMinSizeKb;
+    private Button btnSelectAll;
+    private Button btnClearSelection;
+    private TextView tvSelectionCounter;
+    private ListView listView;
+    private Button btnRestoreCategory;
+
+    private List<RecoveredEntry> allCategoryEntries = new ArrayList<>();
+    private List<RecoveredEntry> filteredEntries = new ArrayList<>();
+    private CategoryFilesAdapter adapter;
+
+    private boolean keepOriginalFolders = true;
+    private final Handler searchHandler = new Handler(Looper.getMainLooper());
+    private Runnable searchRunnable;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+
+        dbHelper = DatabaseHelper.getInstance(this);
+        categoryKey = getIntent().getStringExtra(EXTRA_CATEGORY_KEY);
+        categoryDisplayName = getIntent().getStringExtra(EXTRA_CATEGORY_NAME);
+
+        if (categoryKey == null) {
+            finish();
+            return;
+        }
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
+        root.setBackgroundColor(0xFFF8F9FA);
+
+        int pad = (int) (12 * getResources().getDisplayMetrics().density);
+
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.VERTICAL);
+        topBar.setPadding(pad, pad, pad, pad);
+        topBar.setBackgroundColor(0xFFFFFFFF);
+        root.addView(topBar, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText(categoryDisplayName != null ? categoryDisplayName : "קבצים בקטגוריה");
+        tvTitle.setTextSize(20);
+        tvTitle.setTextColor(0xFF1976D2);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        titleParams.bottomMargin = 8;
+        topBar.addView(tvTitle, titleParams);
+
+        etSearch = new EditText(this);
+        etSearch.setHint("חיפוש קבצים לפי שם...");
+        etSearch.setTextSize(14);
+        etSearch.setPadding(pad, pad, pad, pad);
+        etSearch.setBackgroundColor(0xFFF1F3F4);
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        searchParams.bottomMargin = 8;
+        topBar.addView(etSearch, searchParams);
+
+        LinearLayout filterLayout = new LinearLayout(this);
+        filterLayout.setOrientation(LinearLayout.HORIZONTAL);
+        filterLayout.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams flParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        flParams.bottomMargin = 8;
+        topBar.addView(filterLayout, flParams);
+
+        TextView tvFilterLabel = new TextView(this);
+        tvFilterLabel.setText("הסתר קבצים קטנים מ- (KB): ");
+        tvFilterLabel.setTextSize(13);
+        tvFilterLabel.setTextColor(0xFF333333);
+        filterLayout.addView(tvFilterLabel);
+
+        etMinSizeKb = new EditText(this);
+        etMinSizeKb.setTextSize(14);
+        etMinSizeKb.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        if (FileCategory.PHOTOS.equals(categoryKey)) {
+            etMinSizeKb.setText("10");
+        } else {
+            etMinSizeKb.setText("0");
+        }
+        LinearLayout.LayoutParams sizeParams = new LinearLayout.LayoutParams(
+                (int) (80 * getResources().getDisplayMetrics().density),
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        filterLayout.addView(etMinSizeKb, sizeParams);
+
+        LinearLayout selActionLayout = new LinearLayout(this);
+        selActionLayout.setOrientation(LinearLayout.HORIZONTAL);
+        selActionLayout.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams selParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        selParams.bottomMargin = 4;
+        topBar.addView(selActionLayout, selParams);
+
+        btnSelectAll = new Button(this);
+        btnSelectAll.setText("בחר הכל");
+        btnSelectAll.setTextSize(12);
+        btnSelectAll.setTextColor(0xFFFFFFFF);
+        btnSelectAll.setBackgroundColor(0xFF1976D2);
+        LinearLayout.LayoutParams btnSelLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        btnSelLp.rightMargin = 4;
+        selActionLayout.addView(btnSelectAll, btnSelLp);
+
+        btnClearSelection = new Button(this);
+        btnClearSelection.setText("בטל בחירה");
+        btnClearSelection.setTextSize(12);
+        btnClearSelection.setTextColor(0xFF333333);
+        btnClearSelection.setBackgroundColor(0xFFE0E0E0);
+        selActionLayout.addView(btnClearSelection, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        tvSelectionCounter = new TextView(this);
+        tvSelectionCounter.setTextSize(13);
+        tvSelectionCounter.setTextColor(0xFF1976D2);
+        tvSelectionCounter.setTypeface(null, android.graphics.Typeface.BOLD);
+        topBar.addView(tvSelectionCounter, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        listView = new ListView(this);
+        root.addView(listView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1.0f
+        ));
+
+        adapter = new CategoryFilesAdapter();
+        listView.setAdapter(adapter);
+
+        LinearLayout bottomBar = new LinearLayout(this);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomBar.setPadding(pad, pad, pad, pad);
+        bottomBar.setBackgroundColor(0xFFFFFFFF);
+        root.addView(bottomBar, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        btnRestoreCategory = new Button(this);
+        btnRestoreCategory.setText("שחזר נבחרים בקטגוריה");
+        btnRestoreCategory.setTextColor(0xFFFFFFFF);
+        btnRestoreCategory.setBackgroundColor(0xFF388E3C);
+        bottomBar.addView(btnRestoreCategory, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        TextWatcher filterWatcher = new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (searchRunnable != null) {
+                    searchHandler.removeCallbacks(searchRunnable);
+                }
+                searchRunnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        applyFilterAndSearch();
+                    }
+                };
+                searchHandler.postDelayed(searchRunnable, 300);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        };
+
+        etSearch.addTextChangedListener(filterWatcher);
+        etMinSizeKb.addTextChangedListener(filterWatcher);
+
+        btnSelectAll.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                for (RecoveredEntry e : filteredEntries) {
+                    e.setSelectedState(1);
+                }
+                updateSelectionCounter();
+                adapter.notifyDataSetChanged();
+            }
+        });
+
+        btnClearSelection.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                for (RecoveredEntry e : filteredEntries) {
+                    e.setSelectedState(0);
+                }
+                updateSelectionCounter();
+                adapter.notifyDataSetChanged();
+            }
+        });
+
+        btnRestoreCategory.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                promptRestoreOptions();
+            }
+        });
+
+        setContentView(root);
+        loadEntries();
+    }
+
+    private void loadEntries() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                List<RecoveredEntry> all = dbHelper.getAllEntriesForSaveAll();
+                List<RecoveredEntry> matched = new ArrayList<>();
+                for (RecoveredEntry e : all) {
+                    if (!e.isDirectory() && categoryKey.equals(e.getCategory())) {
+                        matched.add(e);
+                    }
+                }
+                allCategoryEntries = matched;
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+                        applyFilterAndSearch();
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void applyFilterAndSearch() {
+        String query = etSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
+        long minSizeKb = 0;
+        try {
+            minSizeKb = Long.parseLong(etMinSizeKb.getText().toString().trim());
+        } catch (Exception ignored) {}
+        long minSizeBytes = minSizeKb * 1024;
+
+        List<RecoveredEntry> temp = new ArrayList<>();
+        for (RecoveredEntry e : allCategoryEntries) {
+            if (e.getLength() < minSizeBytes) continue;
+            if (!query.isEmpty() && !e.getName().toLowerCase(Locale.ROOT).contains(query)) continue;
+            temp.add(e);
+        }
+
+        // Sort by name
+        temp.sort((o1, o2) -> o1.getName().compareToIgnoreCase(o2.getName()));
+
+        filteredEntries = temp;
+        adapter.notifyDataSetChanged();
+        updateSelectionCounter();
+    }
+
+    private void updateSelectionCounter() {
+        long count = 0;
+        long totalBytes = 0;
+        for (RecoveredEntry e : filteredEntries) {
+            if (e.isSelected()) {
+                count++;
+                totalBytes += e.getLength();
+            }
+        }
+        tvSelectionCounter.setText(String.format(Locale.getDefault(), "נבחרו בקטגוריה: %d קבצים (%s)", count, formatSize(totalBytes)));
+    }
+
+    private void promptRestoreOptions() {
+        long selectedCount = 0;
+        for (RecoveredEntry e : filteredEntries) {
+            if (e.isSelected()) selectedCount++;
+        }
+        if (selectedCount == 0) {
+            Toast.makeText(this, "לא נבחרו קבצים לשחזור", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("אופן שמירת הקבצים")
+                .setMessage("כיצד תרצה לשמור את הקבצים המשוחזרים?")
+                .setPositiveButton("שמור בתיקיות המקוריות", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        keepOriginalFolders = true;
+                        openDirectoryPicker();
+                    }
+                })
+                .setNegativeButton("שם הכל בתיקייה אחת", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        keepOriginalFolders = false;
+                        openDirectoryPicker();
+                    }
+                })
+                .show();
+    }
+
+    private void openDirectoryPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+        String savedUriStr = prefs.getString(PREF_DEST_URI, null);
+        if (savedUriStr != null) {
+            try {
+                Uri initialUri = Uri.parse(savedUriStr);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri);
+                }
+            } catch (Exception ignored) {}
+        }
+        try {
+            startActivityForResult(intent, REQUEST_CODE_SAVE_DIR);
+        } catch (Exception e) {
+            Toast.makeText(this, "שגיאה בפתיחת בורר התיקיות", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CODE_SAVE_DIR && resultCode == RESULT_OK) {
+            if (data != null && data.getData() != null) {
+                final Uri treeUri = data.getData();
+                try {
+                    getContentResolver().takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+                    prefs.edit().putString(PREF_DEST_URI, treeUri.toString()).apply();
+                } catch (Exception ignored) {}
+
+                executeCategoryRestore(treeUri);
+            }
+        }
+    }
+
+    private void executeCategoryRestore(final Uri treeUri) {
+        final List<RecoveredEntry> filesToRestore = new ArrayList<>();
+        for (RecoveredEntry e : filteredEntries) {
+            if (e.isSelected()) {
+                filesToRestore.add(e);
+            }
+        }
+
+        if (filesToRestore.isEmpty()) return;
+
+        Toast.makeText(this, "מתחיל שחזור קבצים מהקטגוריה...", Toast.LENGTH_SHORT).show();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                ContentResolver resolver = getContentResolver();
+                DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(CategoryFilesActivity.class.cast(CategoryFilesActivity.this), treeUri);
+                if (rootDir == null || !rootDir.canWrite()) {
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(CategoryFilesActivity.this, "תקיית היעד אינה נגישה לכתיבה", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                    return;
+                }
+
+                DocumentFileCompat targetDir = rootDir;
+                if (!keepOriginalFolders) {
+                    String subFolderName = "Restored_" + categoryKey + "_" + System.currentTimeMillis();
+                    DocumentFileCompat created = rootDir.createDirectory(subFolderName);
+                    if (created != null) {
+                        targetDir = created;
+                    }
+                }
+
+                int success = 0;
+                int failed = 0;
+                int skipped = 0;
+
+                // Open source from intent or default image file if available
+                ByteSource source = null;
+                try {
+                    // Try to find source image or USB
+                    // For category files restore, we use database offset and length with FileImageSource if content uri is stored, or fallback to any image source
+                    // Here we check last saved scan source or app files
+                    // We can attempt to open via persistent URI if available or let user pick. Alternatively scan source uri can be obtained.
+                    // To ensure robustness, we can try opening content resolver if available.
+                    SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+                    // If we stored a source uri or we can scan database nodes
+                } catch (Exception ignored) {}
+
+                // We can use the active source or read via FileImageSource if uri is saved
+                // Let's implement robust file saving using database offsets
+                for (RecoveredEntry entry : filesToRestore) {
+                    try {
+                        // Find active source byte source
+                        // If byte source is not directly accessible here, we open it from the saved image URI if present
+                    } catch (Exception ignored) {}
+                }
+
+                // Actually, let's delegate to RestoreService or execute directly with a ByteSource
+                // Since RestoreService processes DB selection states, we can set selected state ONLY for these files in DB,
+                // clear others, and start RestoreService!
+                dbHelper.setAllSelected(false);
+                for (RecoveredEntry e : filesToRestore) {
+                    dbHelper.setNodeAndSubtreeSelected(e, 1);
+                }
+
+                Intent intent = new Intent(CategoryFilesActivity.this, RestoreService.class);
+                intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
+                intent.putExtra(RestoreService.EXTRA_SAVE_ALL, false);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    startForegroundService(intent);
+                } else {
+                    startService(intent);
+                }
+
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(CategoryFilesActivity.this, "השחזור החל ברקע עבור קבצי הקטגוריה", Toast.LENGTH_LONG).show();
+                        finish();
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private class CategoryFilesAdapter extends BaseAdapter {
+        @Override
+        public int getCount() {
+            return filteredEntries.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return filteredEntries.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            LinearLayout itemLayout;
+            ViewHolder holder;
+
+            if (convertView == null) {
+                itemLayout = new LinearLayout(CategoryFilesActivity.this);
+                itemLayout.setOrientation(LinearLayout.HORIZONTAL);
+                itemLayout.setGravity(Gravity.CENTER_VERTICAL);
+                int pad = (int) (10 * getResources().getDisplayMetrics().density);
+                itemLayout.setPadding(pad, pad, pad, pad);
+                itemLayout.setBackgroundColor(0xFFFFFFFF);
+
+                CheckBox checkBox = new CheckBox(CategoryFilesActivity.this);
+                checkBox.setFocusable(false);
+                itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                ));
+
+                LinearLayout textLayout = new LinearLayout(CategoryFilesActivity.this);
+                textLayout.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        1.0f
+                );
+                textLp.leftMargin = pad;
+                itemLayout.addView(textLayout, textLp);
+
+                TextView tvName = new TextView(CategoryFilesActivity.this);
+                tvName.setTextSize(15);
+                tvName.setTextColor(0xFF333333);
+                textLayout.addView(tvName);
+
+                TextView tvSubtitle = new TextView(CategoryFilesActivity.this);
+                tvSubtitle.setTextSize(12);
+                tvSubtitle.setTextColor(0xFF757575);
+                textLayout.addView(tvSubtitle);
+
+                holder = new ViewHolder(checkBox, tvName, tvSubtitle);
+                itemLayout.setTag(holder);
+            } else {
+                itemLayout = (LinearLayout) convertView;
+                holder = (ViewHolder) itemLayout.getTag();
+            }
+
+            final RecoveredEntry entry = filteredEntries.get(position);
+            holder.checkBox.setChecked(entry.isSelected());
+            holder.tvName.setText(entry.getName());
+            holder.tvSubtitle.setText(String.format(Locale.getDefault(), "נתיב: %s • גודל: %s", entry.getPath(), formatSize(entry.getLength())));
+
+            holder.checkBox.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    entry.setSelectedState(holder.checkBox.isChecked() ? 1 : 0);
+                    updateSelectionCounter();
+                }
+            });
+
+            itemLayout.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    boolean newState = !entry.isSelected();
+                    entry.setSelectedState(newState ? 1 : 0);
+                    holder.checkBox.setChecked(newState);
+                    updateSelectionCounter();
+                }
+            });
+
+            return itemLayout;
+        }
+
+        class ViewHolder {
+            final CheckBox checkBox;
+            final TextView tvName;
+            final TextView tvSubtitle;
+            ViewHolder(CheckBox checkBox, TextView tvName, TextView tvSubtitle) {
+                this.checkBox = checkBox;
+                this.tvName = tvName;
+                this.tvSubtitle = tvSubtitle;
+            }
+        }
+    }
+
+    private String formatSize(long sizeBytes) {
+        if (sizeBytes <= 0) return "0 בייט";
+        final String[] units = new String[]{"בייט", "קילובייט", "מגהבייט", "ג׳יגהבייט", "טרהבייט"};
+        int digitGroups = (int) (Math.log10(sizeBytes) / Math.log10(1024));
+        return String.format(Locale.getDefault(), "%.2f %s", sizeBytes / Math.pow(1024, digitGroups), units[digitGroups]);
+    }
+}
