@@ -20,9 +20,11 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public class RestoreService extends Service {
 
@@ -228,59 +230,138 @@ public class RestoreService extends Service {
                     return;
                 }
 
-                // 1) Load all folders ordered top-down by depth
-                List<RecoveredEntry> orderedFolders = dbHelper.getOrderedFoldersForRestore(saveAll);
+                // 1) Get all entries (folders and files) from DB to determine top-level selected items and subtrees
+                List<RecoveredEntry> allEntries = dbHelper.getAllEntriesForSaveAll();
+                Map<Long, RecoveredEntry> entryMap = new HashMap<>();
+                for (RecoveredEntry e : allEntries) {
+                    entryMap.put(e.getId(), e);
+                }
+
+                // Determine top-level items: items that are selected (or saveAll means everything)
+                // and have no selected ancestor.
+                List<RecoveredEntry> topLevelItems = new ArrayList<>();
+                for (RecoveredEntry e : allEntries) {
+                    boolean isSelected = saveAll || e.isSelected() || e.isPartial();
+                    if (!isSelected) continue;
+
+                    // Check if any ancestor is selected
+                    boolean hasSelectedAncestor = false;
+                    long currParentId = e.getParentId();
+                    while (currParentId != 0 && entryMap.containsKey(currParentId)) {
+                        RecoveredEntry parentEntry = entryMap.get(currParentId);
+                        if (parentEntry != null && (saveAll || parentEntry.isSelected() || parentEntry.isPartial())) {
+                            hasSelectedAncestor = true;
+                            break;
+                        }
+                        currParentId = parentEntry != null ? parentEntry.getParentId() : 0;
+                    }
+
+                    if (!hasSelectedAncestor) {
+                        topLevelItems.add(e);
+                    }
+                }
+
+                // Map database folder IDs to destination DocumentFileCompat
                 HashMap<Long, DocumentFileCompat> folderMap = new HashMap<>();
-                // Map root "/" to destination rootDir
-                folderMap.put(0L, rootDir);
+
+                // For top-level folders, create them directly under destination rootDir.
+                // For files, they are placed directly in rootDir if top-level, or inside their top-level parent folder.
+                // We order folders by depth (path length) top-down to ensure parents are created before children.
+                List<RecoveredEntry> orderedFolders = dbHelper.getOrderedFoldersForRestore(saveAll);
+                
+                // Filter and process folders that belong to selected subtrees or top-level items
+                Set<Long> validTopLevelIds = new HashSet<>();
+                for (RecoveredEntry tl : topLevelItems) {
+                    validTopLevelIds.add(tl.getId());
+                }
+
+                // We need to create folder structure for all selected items / subtrees under their respective top-level items.
+                // Let's map each folder ID to its relative path from its top-level ancestor.
+                // Or even simpler: collect all entries whose ancestor chain leads to a top-level item.
+                Set<Long> allowedNodeIds = new HashSet<>();
+                for (RecoveredEntry tl : topLevelItems) {
+                    allowedNodeIds.add(tl.getId());
+                    if (tl.isDirectory()) {
+                        addSubtreeIds(tl.getId(), entryMap, allowedNodeIds);
+                    }
+                }
 
                 for (RecoveredEntry folderEntry : orderedFolders) {
                     if (isCancelled) break;
+                    if (!allowedNodeIds.contains(folderEntry.getId())) continue;
+
                     try {
-                        long parentId = dbHelper.getParentId(folderEntry.getPath(), folderEntry.getName());
-                        DocumentFileCompat parentDoc = folderMap.get(parentId);
-                        if (parentDoc == null) {
-                            parentDoc = rootDir;
-                        }
-
-                        String folderName = sanitizeFileName(folderEntry.getName());
-                        DocumentFileCompat existing = parentDoc.findFile(folderName);
-                        if (existing != null && existing.canWrite()) {
-                            foldersReusedCount++;
-                            folderMap.put(folderEntry.getId(), existing);
-                        } else {
-                            // Create directory with retry logic per requirement 3
-                            DocumentFileCompat created = null;
-                            try {
-                                created = parentDoc.createDirectory(folderName);
-                            } catch (Exception ignored) {}
-
-                            if (created == null) {
+                        // Check if this folder is a top-level item itself
+                        if (validTopLevelIds.contains(folderEntry.getId())) {
+                            // Create directly under destination rootDir
+                            String folderName = sanitizeFileName(folderEntry.getName());
+                            DocumentFileCompat existing = rootDir.findFile(folderName);
+                            if (existing != null && existing.canWrite()) {
+                                foldersReusedCount++;
+                                folderMap.put(folderEntry.getId(), existing);
+                            } else {
+                                DocumentFileCompat created = null;
                                 try {
-                                    Thread.sleep(500);
-                                } catch (InterruptedException ie) {
-                                    Thread.currentThread().interrupt();
-                                    break;
+                                    created = rootDir.createDirectory(folderName);
+                                } catch (Exception ignored) {}
+
+                                if (created == null) {
+                                    try { Thread.sleep(300); } catch (Exception ignored2) {}
+                                    created = rootDir.createDirectory(folderName);
                                 }
-                                created = parentDoc.createDirectory(folderName);
+
+                                if (created == null) {
+                                    existing = rootDir.findFile(folderName);
+                                    if (existing != null) {
+                                        foldersReusedCount++;
+                                        folderMap.put(folderEntry.getId(), existing);
+                                    } else {
+                                        throw new Exception("Failed to create top-level directory: " + folderName);
+                                    }
+                                } else {
+                                    foldersCreatedCount++;
+                                    folderMap.put(folderEntry.getId(), created);
+                                }
+                            }
+                        } else {
+                            // Child folder inside another folder
+                            long parentId = folderEntry.getParentId();
+                            DocumentFileCompat parentDoc = folderMap.get(parentId);
+                            if (parentDoc == null) {
+                                parentDoc = rootDir;
                             }
 
-                            if (created == null) {
-                                existing = parentDoc.findFile(folderName);
-                                if (existing != null) {
-                                    foldersReusedCount++;
-                                    folderMap.put(folderEntry.getId(), existing);
-                                } else {
-                                    throw new Exception("Failed to create directory after retry: " + folderName);
-                                }
+                            String folderName = sanitizeFileName(folderEntry.getName());
+                            DocumentFileCompat existing = parentDoc.findFile(folderName);
+                            if (existing != null && existing.canWrite()) {
+                                foldersReusedCount++;
+                                folderMap.put(folderEntry.getId(), existing);
                             } else {
-                                foldersCreatedCount++;
-                                folderMap.put(folderEntry.getId(), created);
+                                DocumentFileCompat created = null;
+                                try {
+                                    created = parentDoc.createDirectory(folderName);
+                                } catch (Exception ignored) {}
+
+                                if (created == null) {
+                                    try { Thread.sleep(300); } catch (Exception ignored2) {}
+                                    created = parentDoc.createDirectory(folderName);
+                                }
+
+                                if (created == null) {
+                                    existing = parentDoc.findFile(folderName);
+                                    if (existing != null) {
+                                        foldersReusedCount++;
+                                        folderMap.put(folderEntry.getId(), existing);
+                                    } else {
+                                        throw new Exception("Failed to create directory: " + folderName);
+                                    }
+                                } else {
+                                    foldersCreatedCount++;
+                                    folderMap.put(folderEntry.getId(), created);
+                                }
                             }
                         }
                     } catch (Exception e) {
-                        StringWriter sw = new StringWriter();
-                        e.printStackTrace(new PrintWriter(sw));
                         String errInfo = "נכשלה יצירת תיקייה " + folderEntry.getName() + ": " + e.getMessage();
                         errorLogs.add(errInfo);
                         recordFailureCause(e.getMessage());
@@ -288,8 +369,33 @@ public class RestoreService extends Service {
                     }
                 }
 
-                // 2) Load files to restore
-                List<RecoveredEntry> filesToRestore = dbHelper.getFilesForRestore(saveAll);
+                // 2) Collect all files to restore that are within allowedNodeIds
+                List<RecoveredEntry> allFiles = dbHelper.getFilesForRestore(saveAll);
+                List<RecoveredEntry> filesToRestore = new ArrayList<>();
+                for (RecoveredEntry fileEntry : allFiles) {
+                    // Check if file itself or any of its ancestors is in allowedNodeIds / topLevelItems
+                    boolean shouldRestore = false;
+                    if (saveAll) {
+                        shouldRestore = true;
+                    } else if (fileEntry.isSelected()) {
+                        shouldRestore = true;
+                    } else {
+                        // Check if parent chain has any allowed/selected node
+                        long currParent = fileEntry.getParentId();
+                        while (currParent != 0 && entryMap.containsKey(currParent)) {
+                            if (allowedNodeIds.contains(currParent)) {
+                                shouldRestore = true;
+                                break;
+                            }
+                            currParent = entryMap.get(currParent).getParentId();
+                        }
+                    }
+
+                    if (shouldRestore) {
+                        filesToRestore.add(fileEntry);
+                    }
+                }
+
                 totalFilesCount = filesToRestore.size();
                 totalBytesCount = 0;
                 for (RecoveredEntry e : filesToRestore) {
@@ -316,9 +422,13 @@ public class RestoreService extends Service {
                     currentFileName = entry.getName();
 
                     try {
-                        long parentId = dbHelper.getParentId(entry.getPath(), entry.getName());
-                        DocumentFileCompat parentDoc = folderMap.get(parentId);
-                        if (parentDoc == null) {
+                        // Find parent DocumentFileCompat
+                        DocumentFileCompat parentDoc = rootDir;
+                        long parentId = entry.getParentId();
+                        if (folderMap.containsKey(parentId)) {
+                            parentDoc = folderMap.get(parentId);
+                        } else {
+                            // If parent is a top-level file or direct root item
                             parentDoc = rootDir;
                         }
 
@@ -380,6 +490,17 @@ public class RestoreService extends Service {
             }
         });
         restoreThread.start();
+    }
+
+    private void addSubtreeIds(long parentId, Map<Long, RecoveredEntry> entryMap, Set<Long> allowedNodeIds) {
+        for (RecoveredEntry e : entryMap.values()) {
+            if (e.getParentId() == parentId) {
+                allowedNodeIds.add(e.getId());
+                if (e.isDirectory()) {
+                    addSubtreeIds(e.getId(), entryMap, allowedNodeIds);
+                }
+            }
+        }
     }
 
     private void recordFailureCause(String message) {

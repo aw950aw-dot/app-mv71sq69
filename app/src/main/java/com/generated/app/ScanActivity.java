@@ -42,8 +42,10 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class ScanActivity extends Activity {
 
@@ -969,31 +971,79 @@ public class ScanActivity extends Activity {
                     public void run() {
                         long count = 0;
                         long bytes = 0;
+                        List<String> samplePaths = new ArrayList<>();
+
                         if (isTestRestoreFlag) {
                             count = 1;
                             bytes = 4096;
-                        } else if (saveAllModeFlag) {
-                            List<RecoveredEntry> allFiles = dbHelper.getAllEntriesForSaveAll();
-                            for (RecoveredEntry e : allFiles) {
-                                if (!e.isDirectory()) {
-                                    count++;
-                                    bytes += e.getLength();
+                            samplePaths.add("test_restore_sample.file");
+                        } else {
+                            List<RecoveredEntry> allEntries = dbHelper.getAllEntriesForSaveAll();
+                            Map<Long, RecoveredEntry> entryMap = new HashMap<>();
+                            for (RecoveredEntry e : allEntries) {
+                                entryMap.put(e.getId(), e);
+                            }
+
+                            // Determine top-level items and collect sample destination paths (up to 3)
+                            List<RecoveredEntry> topLevelItems = new ArrayList<>();
+                            for (RecoveredEntry e : allEntries) {
+                                boolean isSelected = saveAllModeFlag || e.isSelected() || e.isPartial();
+                                if (!isSelected) continue;
+
+                                boolean hasSelectedAncestor = false;
+                                long currParentId = e.getParentId();
+                                while (currParentId != 0 && entryMap.containsKey(currParentId)) {
+                                    RecoveredEntry parentEntry = entryMap.get(currParentId);
+                                    if (parentEntry != null && (saveAllModeFlag || parentEntry.isSelected() || parentEntry.isPartial())) {
+                                        hasSelectedAncestor = true;
+                                        break;
+                                    }
+                                    currParentId = parentEntry != null ? parentEntry.getParentId() : 0;
+                                }
+
+                                if (!hasSelectedAncestor) {
+                                    topLevelItems.add(e);
                                 }
                             }
-                        } else {
-                            long[] stats = dbHelper.getSelectedStats();
-                            count = stats[0];
-                            bytes = stats[1];
+
+                            // Count total files and bytes
+                            if (saveAllModeFlag) {
+                                for (RecoveredEntry e : allEntries) {
+                                    if (!e.isDirectory()) {
+                                        count++;
+                                        bytes += e.getLength();
+                                    }
+                                }
+                            } else {
+                                long[] stats = dbHelper.getSelectedStats();
+                                count = stats[0];
+                                bytes = stats[1];
+                            }
+
+                            // Generate up to 3 sample paths that will be created directly under destination root
+                            for (RecoveredEntry tl : topLevelItems) {
+                                if (samplePaths.size() < 3) {
+                                    samplePaths.add("/" + sanitizeFileName(tl.getName()) + (tl.isDirectory() ? "/..." : ""));
+                                }
+                            }
+                            if (samplePaths.isEmpty()) {
+                                for (RecoveredEntry e : allEntries) {
+                                    if (!e.isDirectory() && samplePaths.size() < 3) {
+                                        samplePaths.add("/" + sanitizeFileName(e.getName()));
+                                    }
+                                }
+                            }
                         }
 
                         final long finalCount = count;
                         final long finalBytes = bytes;
                         final String readablePath = getReadablePathFromTreeUri(treeUri);
+                        final List<String> finalSamples = samplePaths;
 
                         new Handler(Looper.getMainLooper()).post(new Runnable() {
                             @Override
                             public void run() {
-                                showRestoreConfirmationDialog(treeUri, finalCount, finalBytes, readablePath);
+                                showRestoreConfirmationDialog(treeUri, finalCount, finalBytes, readablePath, finalSamples);
                             }
                         });
                     }
@@ -1019,14 +1069,21 @@ public class ScanActivity extends Activity {
         return treeUri.toString();
     }
 
-    private void showRestoreConfirmationDialog(final Uri treeUri, long fileCount, long totalBytes, String readablePath) {
-        String message = String.format(Locale.getDefault(),
-                "Restore %d files (%s) to:\n%s",
-                fileCount, formatSize(totalBytes), readablePath);
+    private void showRestoreConfirmationDialog(final Uri treeUri, long fileCount, long totalBytes, String readablePath, List<String> samplePaths) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format(Locale.getDefault(), "Restore %d files (%s) to:\n%s\n\n", fileCount, formatSize(totalBytes), readablePath));
+        sb.append("First destination paths to be created:\n");
+        if (samplePaths != null && !samplePaths.isEmpty()) {
+            for (int i = 0; i < samplePaths.size(); i++) {
+                sb.append("• ").append(samplePaths.get(i)).append("\n");
+            }
+        } else {
+            sb.append("• (Root directory)\n");
+        }
 
         new AlertDialog.Builder(this)
                 .setTitle("אישור שחזור")
-                .setMessage(message)
+                .setMessage(sb.toString())
                 .setPositiveButton("Start", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
