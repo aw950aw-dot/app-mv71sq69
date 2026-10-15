@@ -17,6 +17,7 @@ import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -59,7 +60,9 @@ public class ScanActivity extends Activity {
     private LinearLayout layoutScanScreen;
     private TextView tvScanStatus;
     private TextView tvScanLiveCounters;
+    private FrameLayout animationContainer;
     private ScanAnimationView scanAnimationView;
+    private TextView tvAnimationError;
     private Button btnCancelScan;
     private Button btnToggleTechDetails;
     private LinearLayout layoutTechDetailsContainer;
@@ -158,6 +161,7 @@ public class ScanActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Log.d("Lifecycle", "ScanActivity onCreate. Screen chosen: Scan/Progress Screen");
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         try {
@@ -172,6 +176,35 @@ public class ScanActivity extends Activity {
         } catch (Throwable t) {
             showExceptionDialog(t);
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        Log.d("Lifecycle", "ScanActivity onNewIntent. Screen chosen: Scan/Progress or Results Screen");
+        setIntent(intent);
+        sourceUri = intent.getParcelableExtra(EXTRA_URI);
+        usbDeviceName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
+        decideScreen();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Log.d("Lifecycle", "ScanActivity onResume. Screen chosen: currentUiMode=" + currentUiMode);
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ScanService.ACTION_PROGRESS);
+        filter.addAction(ScanService.ACTION_COMPLETED);
+        filter.addAction(RestoreService.ACTION_PROGRESS);
+        filter.addAction(RestoreService.ACTION_COMPLETED);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
+            registerReceiver(restoreReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(scanReceiver, filter);
+            registerReceiver(restoreReceiver, filter);
+        }
+        decideScreen();
     }
 
     private void decideScreen() {
@@ -242,7 +275,7 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
         root.setBackgroundColor(0xFFF8F9FA);
 
-        // --- Screen 1: Scan / Progress Screen ---
+        // --- Screen 1: Scan / Progress Screen (Safe, plain layout: title, folders and files counters, elapsed time, Cancel button) ---
         layoutScanScreen = new LinearLayout(this);
         layoutScanScreen.setOrientation(LinearLayout.VERTICAL);
         layoutScanScreen.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -262,13 +295,38 @@ public class ScanActivity extends Activity {
         thLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         layoutScanScreen.addView(tvScanHeader, thLp);
 
+        // Safe ScanAnimationView container with try/catch fallback per requirement
         int animWidth = (int) (240 * getResources().getDisplayMetrics().density);
         int animHeight = (int) (160 * getResources().getDisplayMetrics().density);
-        scanAnimationView = new ScanAnimationView(this);
-        LinearLayout.LayoutParams animLp = new LinearLayout.LayoutParams(animWidth, animHeight);
-        animLp.gravity = Gravity.CENTER;
-        animLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
-        layoutScanScreen.addView(scanAnimationView, animLp);
+        animationContainer = new FrameLayout(this);
+        LinearLayout.LayoutParams animContainerLp = new LinearLayout.LayoutParams(animWidth, animHeight);
+        animContainerLp.gravity = Gravity.CENTER;
+        animContainerLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        layoutScanScreen.addView(animationContainer, animContainerLp);
+
+        tvAnimationError = new TextView(this);
+        tvAnimationError.setTextSize(12);
+        tvAnimationError.setTextColor(0xFFFF5722);
+        tvAnimationError.setVisibility(View.GONE);
+        animationContainer.addView(tvAnimationError, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+
+        try {
+            SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+            boolean disableAnim = prefs.getBoolean(SettingsActivity.PREF_DISABLE_ANIMATION, false);
+            if (!disableAnim) {
+                scanAnimationView = new ScanAnimationView(this);
+                animationContainer.addView(scanAnimationView, new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+            }
+        } catch (Throwable t) {
+            if (scanAnimationView != null) {
+                animationContainer.removeView(scanAnimationView);
+                scanAnimationView = null;
+            }
+            tvAnimationError.setVisibility(View.VISIBLE);
+            tvAnimationError.setText("Animation error: " + t.getMessage());
+        }
 
         tvScanStatus = new TextView(this);
         tvScanStatus.setText("מתחבר לסריקה...");
@@ -427,7 +485,7 @@ public class ScanActivity extends Activity {
         tvResTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         topBarResults.addView(tvResTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-        Button btnSearchToggle = new Button(this);
+        btnSearchToggle = new Button(this);
         ImageView ivSearch = new ImageView(this);
         ivSearch.setImageResource(R.drawable.ic_search);
         ivSearch.setColorFilter(0xFF1976D2);
@@ -1002,24 +1060,6 @@ public class ScanActivity extends Activity {
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(ScanService.ACTION_PROGRESS);
-        filter.addAction(ScanService.ACTION_COMPLETED);
-        filter.addAction(RestoreService.ACTION_PROGRESS);
-        filter.addAction(RestoreService.ACTION_COMPLETED);
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
-            registerReceiver(restoreReceiver, filter, Context.RECEIVER_EXPORTED);
-        } else {
-            registerReceiver(scanReceiver, filter);
-            registerReceiver(restoreReceiver, filter);
-        }
-        decideScreen();
-    }
-
-    @Override
     protected void onPause() {
         super.onPause();
         try {
@@ -1315,10 +1355,5 @@ public class ScanActivity extends Activity {
         final String[] units = new String[]{"בייט", "קילובייט", "מגהבייט", "ג׳יגהבייט", "טרהבייט"};
         int digitGroups = (int) (Math.log10(sizeBytes) / Math.log10(1024));
         return String.format(Locale.getDefault(), "%.2f %s", sizeBytes / Math.pow(1024, digitGroups), units[digitGroups]);
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
     }
 }

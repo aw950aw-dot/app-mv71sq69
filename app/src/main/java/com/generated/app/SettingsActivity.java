@@ -20,7 +20,6 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.File;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -30,6 +29,7 @@ public class SettingsActivity extends Activity {
     private static final int REQUEST_CODE_CHANGE_DEST = 3003;
     private static final int REQUEST_CODE_OPEN_IMAGE = 3004;
     private static final int REQUEST_CODE_SAVE_REPORT = 3005;
+    public static final String PREF_DISABLE_ANIMATION = "pref_disable_animation";
 
     private TextView tvDestInfo;
     private TextView tvImageSourceInfo;
@@ -40,6 +40,7 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        android.util.Log.d("Lifecycle", "SettingsActivity onCreate. Screen chosen: SettingsActivity");
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         LinearLayout root = new LinearLayout(this);
@@ -66,12 +67,7 @@ public class SettingsActivity extends Activity {
         btnBack.setTextSize(18);
         btnBack.setTextColor(0xFF1976D2);
         btnBack.setBackgroundColor(0x00000000);
-        btnBack.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                finish();
-            }
-        });
+        btnBack.setOnClickListener(v -> finish());
         topBar.addView(btnBack, new LinearLayout.LayoutParams(
                 (int) (48 * getResources().getDisplayMetrics().density),
                 (int) (48 * getResources().getDisplayMetrics().density)
@@ -177,22 +173,17 @@ public class SettingsActivity extends Activity {
         btnClearSavedScan.setText("מחק סריקות שמורות ונתונים");
         btnClearSavedScan.setTextColor(0xFFD32F2F);
         btnClearSavedScan.setBackgroundColor(0xFFFFEBEE);
-        btnClearSavedScan.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                new AlertDialog.Builder(SettingsActivity.this)
-                        .setTitle("מחיקת סריקה שמורה")
-                        .setMessage("האם אתה בטוח שברצונך למחוק את כל נתוני הסריקה והתוצאות השמורות?")
-                        .setPositiveButton("מחק", (dialog, which) -> {
-                            DatabaseHelper.getInstance(SettingsActivity.this).clearDatabase();
-                            SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-                            prefs.edit().putBoolean("pref_has_saved_scan", false).apply();
-                            Toast.makeText(SettingsActivity.this, "הנתונים השמורים נמחקו", Toast.LENGTH_SHORT).show();
-                        })
-                        .setNegativeButton("ביטול", null)
-                        .show();
-            }
-        });
+        btnClearSavedScan.setOnClickListener(v -> new AlertDialog.Builder(SettingsActivity.this)
+                .setTitle("מחיקת סריקה שמורה")
+                .setMessage("האם אתה בטוח שברצונך למחוק את כל נתוני הסריקה והתוצאות השמורות?")
+                .setPositiveButton("מחק", (dialog, which) -> {
+                    DatabaseHelper.getInstance(SettingsActivity.this).clearDatabase();
+                    SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+                    prefs.edit().putBoolean("pref_has_saved_scan", false).apply();
+                    Toast.makeText(SettingsActivity.this, "הנתונים השמורים נמחקו", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("ביטול", null)
+                .show());
         cardStorage.addView(btnClearSavedScan);
 
 
@@ -221,19 +212,34 @@ public class SettingsActivity extends Activity {
         advLp.bottomMargin = 16;
         content.addView(advancedContainer, advLp);
 
-        btnToggleAdvanced.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                boolean isVis = advancedContainer.getVisibility() == View.VISIBLE;
-                advancedContainer.setVisibility(isVis ? View.GONE : View.VISIBLE);
-                btnToggleAdvanced.setText(isVis ? "הצג הגדרות מתקדמות ▼" : "הסתר הגדרות מתקדמות ▲");
-                if (!isVis) {
-                    updatePerformanceLogInfoText();
-                }
+        btnToggleAdvanced.setOnClickListener(v -> {
+            boolean isVis = advancedContainer.getVisibility() == View.VISIBLE;
+            advancedContainer.setVisibility(isVis ? View.GONE : View.VISIBLE);
+            btnToggleAdvanced.setText(isVis ? "הצג הגדרות מתקדמות ▼" : "הסתר הגדרות מתקדמות ▲");
+            if (!isVis) {
+                updatePerformanceLogInfoText();
             }
         });
 
         // Advanced items inside advancedContainer
+        final CheckBox cbDisableAnim = new CheckBox(this);
+        cbDisableAnim.setText("Disable scan animation (בטל אנימציית סריקה)");
+        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+        cbDisableAnim.setChecked(prefs.getBoolean(PREF_DISABLE_ANIMATION, false));
+        cbDisableAnim.setTextSize(14);
+        cbDisableAnim.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(PREF_DISABLE_ANIMATION, isChecked)
+                    .apply();
+        });
+        LinearLayout.LayoutParams cbAnimLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        cbAnimLp.bottomMargin = 12;
+        advancedContainer.addView(cbDisableAnim, cbAnimLp);
+
         tvImageSourceInfo = new TextView(this);
         tvImageSourceInfo.setTextSize(13);
         tvImageSourceInfo.setTextColor(0xFF666666);
@@ -244,17 +250,14 @@ public class SettingsActivity extends Activity {
         btnSelectImage.setText(R.string.select_image_file);
         btnSelectImage.setTextColor(0xFFFFFFFF);
         btnSelectImage.setBackgroundColor(0xFF00838F);
-        btnSelectImage.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("*/*");
-                try {
-                    startActivityForResult(intent, REQUEST_CODE_OPEN_IMAGE);
-                } catch (Exception e) {
-                    Toast.makeText(SettingsActivity.this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
-                }
+        btnSelectImage.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            try {
+                startActivityForResult(intent, REQUEST_CODE_OPEN_IMAGE);
+            } catch (Exception e) {
+                Toast.makeText(SettingsActivity.this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
             }
         });
         LinearLayout.LayoutParams imgBtnLp = new LinearLayout.LayoutParams(
@@ -275,15 +278,12 @@ public class SettingsActivity extends Activity {
         btnChangeDest.setText("שנה תיקיית יעד לשחזור");
         btnChangeDest.setTextColor(0xFFFFFFFF);
         btnChangeDest.setBackgroundColor(0xFF00838F);
-        btnChangeDest.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-                try {
-                    startActivityForResult(intent, REQUEST_CODE_CHANGE_DEST);
-                } catch (Exception e) {
-                    Toast.makeText(SettingsActivity.this, "שגיאה בפתיחת בורר התיקיות", Toast.LENGTH_SHORT).show();
-                }
+        btnChangeDest.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            try {
+                startActivityForResult(intent, REQUEST_CODE_CHANGE_DEST);
+            } catch (Exception e) {
+                Toast.makeText(SettingsActivity.this, "שגיאה בפתיחת בורר התיקיות", Toast.LENGTH_SHORT).show();
             }
         });
         LinearLayout.LayoutParams destBtnLp = new LinearLayout.LayoutParams(
@@ -334,12 +334,7 @@ public class SettingsActivity extends Activity {
         btnTestRestore.setText("Test Restore (בדיקת שחזור)");
         btnTestRestore.setTextColor(0xFFFFFFFF);
         btnTestRestore.setBackgroundColor(0xFF1976D2);
-        btnTestRestore.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Toast.makeText(SettingsActivity.this, "Test Restore completed successfully.", Toast.LENGTH_SHORT).show();
-            }
-        });
+        btnTestRestore.setOnClickListener(v -> Toast.makeText(SettingsActivity.this, "Test Restore completed successfully.", Toast.LENGTH_SHORT).show());
         LinearLayout.LayoutParams testLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -352,18 +347,15 @@ public class SettingsActivity extends Activity {
         btnCopyReport.setText("העתק דוח אבחון מלא");
         btnCopyReport.setTextColor(0xFFFFFFFF);
         btnCopyReport.setBackgroundColor(0xFF1976D2);
-        btnCopyReport.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                try {
-                    String report = DiagnosticReporter.generateFullReport(SettingsActivity.this);
-                    ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (clipboard != null) {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Diagnostic Report", report));
-                        Toast.makeText(SettingsActivity.this, "הדוח הועתק ללוח", Toast.LENGTH_SHORT).show();
-                    }
-                } catch (Exception ignored) {}
-            }
+        btnCopyReport.setOnClickListener(v -> {
+            try {
+                String report = DiagnosticReporter.generateFullReport(SettingsActivity.this);
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Diagnostic Report", report));
+                    Toast.makeText(SettingsActivity.this, "הדוח הועתק ללוח", Toast.LENGTH_SHORT).show();
+                }
+            } catch (Exception ignored) {}
         });
         LinearLayout.LayoutParams repLp1 = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -376,17 +368,14 @@ public class SettingsActivity extends Activity {
         btnSaveReport.setText("שמור דוח אבחון כקובץ");
         btnSaveReport.setTextColor(0xFFFFFFFF);
         btnSaveReport.setBackgroundColor(0xFF1976D2);
-        btnSaveReport.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("text/plain");
-                intent.putExtra(Intent.EXTRA_TITLE, "sd_rescue_diagnostic_report.txt");
-                try {
-                    startActivityForResult(intent, REQUEST_CODE_SAVE_REPORT);
-                } catch (Exception ignored) {}
-            }
+        btnSaveReport.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("text/plain");
+            intent.putExtra(Intent.EXTRA_TITLE, "sd_rescue_diagnostic_report.txt");
+            try {
+                startActivityForResult(intent, REQUEST_CODE_SAVE_REPORT);
+            } catch (Exception ignored) {}
         });
         LinearLayout.LayoutParams repLp2 = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -427,14 +416,11 @@ public class SettingsActivity extends Activity {
         btnSave.setTextColor(0xFFFFFFFF);
         btnSave.setBackgroundColor(0xFF1976D2);
         btnSave.setPadding(pad, pad, pad, pad);
-        btnSave.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                String selectedCp = (String) spinnerCp.getSelectedItem();
-                CodepageDecoder.setCodepage(selectedCp);
-                Toast.makeText(SettingsActivity.this, R.string.saved_success, Toast.LENGTH_SHORT).show();
-                finish();
-            }
+        btnSave.setOnClickListener(v -> {
+            String selectedCp = (String) spinnerCp.getSelectedItem();
+            CodepageDecoder.setCodepage(selectedCp);
+            Toast.makeText(SettingsActivity.this, R.string.saved_success, Toast.LENGTH_SHORT).show();
+            finish();
         });
         LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -444,6 +430,12 @@ public class SettingsActivity extends Activity {
         content.addView(btnSave, saveLp);
 
         setContentView(root);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        android.util.Log.d("Lifecycle", "SettingsActivity onResume. Screen chosen: SettingsActivity");
     }
 
     private void addSectionHeader(LinearLayout parent, String title) {
