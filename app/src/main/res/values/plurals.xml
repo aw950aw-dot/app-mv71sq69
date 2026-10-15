@@ -1,0 +1,14 @@
+<resources>
+    <plurals name="files_count">
+        <item quantity="one">קובץ אחד</item>
+        <item quantity="two">%d קבצים</item>
+        <item quantity="many">%d קבצים</item>
+        <item quantity="other">%d קבצים</item>
+    </plurals>
+    <plurals name="folders_count">
+        <item quantity="one">תיקייה אחת</item>
+        <item quantity="two">%d תיקיות</item>
+        <item quantity="many">%d תיקיות</item>
+        <item quantity="other">%d תיקיות</item>
+    </plurals>
+</resources>

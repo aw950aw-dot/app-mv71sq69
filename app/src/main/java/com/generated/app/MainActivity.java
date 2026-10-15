@@ -22,6 +22,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -29,20 +30,29 @@ import android.widget.Toast;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
 
-    private static final int REQUEST_CODE_OPEN_DOCUMENT = 1001;
     private static final int REQUEST_CODE_POST_NOTIFICATIONS = 1002;
     private static final String PREF_BATTERY_DIALOG_SHOWN = "pref_battery_dialog_shown";
     private static final String PREF_DEST_URI = "pref_dest_uri";
+    private static final String PREF_LAST_SCAN_DATE = "pref_last_scan_date";
+    private static final String PREF_HAS_SAVED_SCAN = "pref_has_saved_scan";
 
-    private TextView tvFileName;
-    private TextView tvFileSize;
-    private Button btnStartScan;
+    private LinearLayout cardStatusContainer;
+    private LinearLayout cardPreviousScanContainer;
+    private TextView tvStatusTitle;
+    private TextView tvStatusSubtitle;
+    private Button btnScanCard;
+    private Button btnOpenResults;
+    private Button btnScanAgain;
+
     private ByteSource currentByteSource;
     private Uri currentUri;
     private UsbDevice currentUsbDevice;
@@ -75,13 +85,11 @@ public class MainActivity extends Activity {
                         currentByteSource = null;
                     }
                     currentUsbDevice = null;
-                    tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
-                    tvFileSize.setText(getString(R.string.file_size_label) + "-");
-                    btnStartScan.setEnabled(false);
+                    updateUIState();
 
                     new AlertDialog.Builder(MainActivity.this)
                             .setTitle("התקן נותק")
-                            .setMessage("התקן ה-USB / קורא הכרטיסים נותק. החיבור נסגר ושמירת הנתונים הקיימת נשמרה.")
+                            .setMessage("התקן ה-USB / קורא הכרטיסים נותק. החיבור נסגר.")
                             .setPositiveButton(android.R.string.ok, null)
                             .show();
                 }
@@ -93,14 +101,12 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Check if a scan or restore job is already running; if so, jump straight to ScanActivity
         if (ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
             startActivity(new Intent(this, ScanActivity.class));
             finish();
             return;
         }
 
-        // Check for unfinished restore queue in DB
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
         if (dbHelper.hasUnfinishedRestore()) {
             showUnfinishedRestoreDialog();
@@ -131,155 +137,131 @@ public class MainActivity extends Activity {
 
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
-        FrameLayout rootContainer = new FrameLayout(this);
-        rootContainer.setLayoutParams(new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-        rootContainer.setBackgroundColor(0xFFF5F5F5);
-
         LinearLayout rootLayout = new LinearLayout(this);
         rootLayout.setOrientation(LinearLayout.VERTICAL);
-        rootLayout.setGravity(Gravity.CENTER_HORIZONTAL);
-        int padding = (int) (24 * getResources().getDisplayMetrics().density);
-        rootLayout.setPadding(padding, padding, padding, padding);
+        rootLayout.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
+        rootLayout.setBackgroundColor(0xFFF8F9FA);
 
-        FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-        );
-        rootContainer.addView(rootLayout, layoutParams);
+        int padding = (int) (16 * getResources().getDisplayMetrics().density);
+
+        // Top App Bar
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setPadding(padding, padding, padding, padding);
+        topBar.setBackgroundColor(0xFFFFFFFF);
+        rootLayout.addView(topBar, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
 
         TextView tvTitle = new TextView(this);
         tvTitle.setText(R.string.app_name);
-        tvTitle.setTextSize(28);
+        tvTitle.setTextSize(22);
         tvTitle.setTextColor(0xFF1976D2);
-        tvTitle.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        titleParams.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
-        rootLayout.addView(tvTitle, titleParams);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        topBar.addView(tvTitle, titleLp);
 
-        Button btnSelect = new Button(this);
-        btnSelect.setText(R.string.select_image_file);
-        btnSelect.setTextColor(0xFFFFFFFF);
-        btnSelect.setBackgroundColor(0xFF1976D2);
-        int btnPadding = (int) (14 * getResources().getDisplayMetrics().density);
-        btnSelect.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
-        
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        btnParams.bottomMargin = (int) (12 * getResources().getDisplayMetrics().density);
-        rootLayout.addView(btnSelect, btnParams);
-
-        Button btnSelectUsb = new Button(this);
-        btnSelectUsb.setText(R.string.select_usb_device);
-        btnSelectUsb.setTextColor(0xFFFFFFFF);
-        btnSelectUsb.setBackgroundColor(0xFF00838F);
-        btnSelectUsb.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
-        rootLayout.addView(btnSelectUsb, btnParams);
-
-        Button btnGuide = new Button(this);
-        btnGuide.setText(R.string.menu_guide);
-        btnGuide.setTextColor(0xFFFFFFFF);
-        btnGuide.setBackgroundColor(0xFF6A1B9A);
-        btnGuide.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
-        rootLayout.addView(btnGuide, btnParams);
-
-        Button btnSettings = new Button(this);
-        btnSettings.setText(R.string.menu_settings);
-        btnSettings.setTextColor(0xFFFFFFFF);
-        btnSettings.setBackgroundColor(0xFF455A64);
-        btnSettings.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
-        rootLayout.addView(btnSettings, btnParams);
-
-        btnStartScan = new Button(this);
-        btnStartScan.setText(R.string.start_scan);
-        btnStartScan.setTextColor(0xFFFFFFFF);
-        btnStartScan.setBackgroundColor(0xFF388E3C);
-        btnStartScan.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
-        btnStartScan.setEnabled(false);
-        
-        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        scanParams.bottomMargin = (int) (20 * getResources().getDisplayMetrics().density);
-        rootLayout.addView(btnStartScan, scanParams);
-
-        LinearLayout cardLayout = new LinearLayout(this);
-        cardLayout.setOrientation(LinearLayout.VERTICAL);
-        cardLayout.setPadding(btnPadding, btnPadding, btnPadding, btnPadding);
-        cardLayout.setBackgroundColor(0xFFFFFFFF);
-        
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        rootLayout.addView(cardLayout, cardParams);
-
-        tvFileName = new TextView(this);
-        tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
-        tvFileName.setTextSize(15);
-        tvFileName.setTextColor(0xFF333333);
-        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        textParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
-        cardLayout.addView(tvFileName, textParams);
-
-        tvFileSize = new TextView(this);
-        tvFileSize.setText(getString(R.string.file_size_label) + "-");
-        tvFileSize.setTextSize(15);
-        tvFileSize.setTextColor(0xFF333333);
-        cardLayout.addView(tvFileSize, textParams);
-
-        TextView tvVersion = new TextView(this);
-        String buildDateTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date());
-        tvVersion.setText("v0.6 build " + buildDateTime);
-        tvVersion.setTextSize(11);
-        tvVersion.setTextColor(0xFF888888);
-        FrameLayout.LayoutParams versionParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-        );
-        versionParams.gravity = Gravity.BOTTOM | Gravity.END;
-        int cornerMargin = (int) (12 * getResources().getDisplayMetrics().density);
-        versionParams.setMargins(cornerMargin, cornerMargin, cornerMargin, cornerMargin);
-        rootContainer.addView(tvVersion, versionParams);
-
-        btnSelect.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openFileSelector();
-            }
-        });
-
-        btnSelectUsb.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openUsbDeviceSelector();
-            }
-        });
-
-        btnGuide.setOnClickListener(new View.OnClickListener() {
+        // Help Icon (Emergency Guide)
+        Button btnHelp = new Button(this);
+        btnHelp.setText("❓");
+        btnHelp.setTextSize(16);
+        btnHelp.setTextColor(0xFF1976D2);
+        btnHelp.setBackgroundColor(0x00000000);
+        btnHelp.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, GuideActivity.class));
             }
         });
+        topBar.addView(btnHelp, new LinearLayout.LayoutParams(
+                (int)(48 * getResources().getDisplayMetrics().density),
+                (int)(48 * getResources().getDisplayMetrics().density)
+        ));
 
+        // Settings Icon
+        Button btnSettings = new Button(this);
+        btnSettings.setText("⚙️");
+        btnSettings.setTextSize(16);
+        btnSettings.setTextColor(0xFF1976D2);
+        btnSettings.setBackgroundColor(0x00000000);
         btnSettings.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, SettingsActivity.class));
             }
         });
+        topBar.addView(btnSettings, new LinearLayout.LayoutParams(
+                (int)(48 * getResources().getDisplayMetrics().density),
+                (int)(48 * getResources().getDisplayMetrics().density)
+        ));
 
-        btnStartScan.setOnClickListener(new View.OnClickListener() {
+        // Content Scroll Area
+        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
+        rootLayout.addView(scrollView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1.0f
+        ));
+
+        LinearLayout contentContainer = new LinearLayout(this);
+        contentContainer.setOrientation(LinearLayout.VERTICAL);
+        contentContainer.setPadding(padding, padding, padding, padding);
+        scrollView.addView(contentContainer, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        // Main Status Card (16dp rounded corners, 16dp spacing, white card)
+        cardStatusContainer = new LinearLayout(this);
+        cardStatusContainer.setOrientation(LinearLayout.VERTICAL);
+        cardStatusContainer.setPadding(padding, padding, padding, padding);
+        cardStatusContainer.setBackgroundColor(0xFFFFFFFF);
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        cardLp.bottomMargin = padding;
+        contentContainer.addView(cardStatusContainer, cardLp);
+
+        tvStatusTitle = new TextView(this);
+        tvStatusTitle.setText(R.string.connect_card_prompt);
+        tvStatusTitle.setTextSize(18);
+        tvStatusTitle.setTextColor(0xFF333333);
+        tvStatusTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams stParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        stParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        cardStatusContainer.addView(tvStatusTitle, stParams);
+
+        tvStatusSubtitle = new TextView(this);
+        tvStatusSubtitle.setTextSize(14);
+        tvStatusSubtitle.setTextColor(0xFF757575);
+        LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        subParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        cardStatusContainer.addView(tvStatusSubtitle, subParams);
+
+        // Primary Button Style (Blue background, white text, 16dp padding)
+        btnScanCard = new Button(this);
+        btnScanCard.setText(R.string.scan_card_button);
+        btnScanCard.setTextColor(0xFFFFFFFF);
+        btnScanCard.setBackgroundColor(0xFF1976D2);
+        btnScanCard.setVisibility(View.GONE);
+        int btnPad = (int) (14 * getResources().getDisplayMetrics().density);
+        btnScanCard.setPadding(btnPad, btnPad, btnPad, btnPad);
+        cardStatusContainer.addView(btnScanCard, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        btnScanCard.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 checkAndShowBatteryOptimizationDialog(new Runnable() {
@@ -291,8 +273,165 @@ public class MainActivity extends Activity {
             }
         });
 
-        setContentView(rootContainer);
-        handleIntent(getIntent());
+        // Previous Scan Card
+        cardPreviousScanContainer = new LinearLayout(this);
+        cardPreviousScanContainer.setOrientation(LinearLayout.VERTICAL);
+        cardPreviousScanContainer.setPadding(padding, padding, padding, padding);
+        cardPreviousScanContainer.setBackgroundColor(0xFFFFFFFF);
+        cardPreviousScanContainer.setVisibility(View.GONE);
+        LinearLayout.LayoutParams prevCardLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        prevCardLp.bottomMargin = padding;
+        contentContainer.addView(cardPreviousScanContainer, prevCardLp);
+
+        TextView tvPrevTitle = new TextView(this);
+        tvPrevTitle.setText(R.string.previous_scan_title);
+        tvPrevTitle.setTextSize(16);
+        tvPrevTitle.setTextColor(0xFF1976D2);
+        tvPrevTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams ptParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        ptParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        cardPreviousScanContainer.addView(tvPrevTitle, ptParams);
+
+        final TextView tvPrevDetails = new TextView(this);
+        tvPrevDetails.setTextSize(14);
+        tvPrevDetails.setTextColor(0xFF555555);
+        LinearLayout.LayoutParams pdParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        pdParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        cardPreviousScanContainer.addView(tvPrevDetails, pdParams);
+
+        LinearLayout prevBtnLayout = new LinearLayout(this);
+        prevBtnLayout.setOrientation(LinearLayout.HORIZONTAL);
+        cardPreviousScanContainer.addView(prevBtnLayout, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        btnOpenResults = new Button(this);
+        btnOpenResults.setText(R.string.open_results);
+        btnOpenResults.setTextColor(0xFFFFFFFF);
+        btnOpenResults.setBackgroundColor(0xFF1976D2);
+        LinearLayout.LayoutParams bOpenLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        bOpenLp.rightMargin = 8;
+        prevBtnLayout.addView(btnOpenResults, bOpenLp);
+
+        btnScanAgain = new Button(this);
+        btnScanAgain.setText(R.string.scan_again);
+        btnScanAgain.setTextColor(0xFF333333);
+        btnScanAgain.setBackgroundColor(0xFFE0E0E0);
+        prevBtnLayout.addView(btnScanAgain, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+
+        btnOpenResults.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (currentUri != null) {
+                    Intent intent = new Intent(MainActivity.this, ScanActivity.class);
+                    intent.putExtra(ScanActivity.EXTRA_URI, currentUri);
+                    startActivity(intent);
+                } else if (currentUsbDevice != null) {
+                    Intent intent = new Intent(MainActivity.this, ScanActivity.class);
+                    intent.putExtra(ScanActivity.EXTRA_USB_DEVICE_NAME, currentUsbDevice.getDeviceName());
+                    startActivity(intent);
+                } else {
+                    startActivity(new Intent(MainActivity.this, ScanActivity.class));
+                }
+            }
+        });
+
+        btnScanAgain.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                DatabaseHelper.getInstance(MainActivity.this).clearDatabase();
+                SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+                prefs.edit().putBoolean(PREF_HAS_SAVED_SCAN, false).apply();
+                cardPreviousScanContainer.setVisibility(View.GONE);
+                Toast.init(MainActivity.this);
+                Toast.makeText(MainActivity.this, "הנתונים הקודמים נוקו, מוכן לסריקה חדשה", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        setContentView(rootLayout);
+        checkForConnectedUsbDevice();
+        checkSavedScanState(tvPrevDetails);
+    }
+
+    private void checkSavedScanState(TextView tvDetails) {
+        DatabaseHelper db = DatabaseHelper.getInstance(this);
+        int totalFiles = db.getTotalFilesCount();
+        int totalFolders = db.getTotalFoldersCount();
+        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+        boolean hasSaved = prefs.getBoolean(PREF_HAS_SAVED_SCAN, false) || (totalFiles > 0 || totalFolders > 0);
+
+        if (hasSaved) {
+            String dateStr = prefs.getString(PREF_LAST_SCAN_DATE, "תאריך לא ידוע");
+            String filesPlural = getResources().getQuantityString(R.plurals.files_count, totalFiles, totalFiles);
+            String foldersPlural = getResources().getQuantityString(R.plurals.folders_count, totalFolders, totalFolders);
+            tvDetails.setText(String.format(Locale.getDefault(), "תאריך: %s\nמצא: %s, %s", dateStr, filesPlural, foldersPlural));
+            cardPreviousScanContainer.setVisibility(View.VISIBLE);
+        } else {
+            cardPreviousScanContainer.setVisibility(View.GONE);
+        }
+    }
+
+    private void checkForConnectedUsbDevice() {
+        UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+        HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+        for (UsbDevice device : deviceList.values()) {
+            loadUsbDevice(device);
+            break; // Pick first detected
+        }
+    }
+
+    private void loadUsbDevice(UsbDevice device) {
+        if (currentByteSource != null) {
+            currentByteSource.close();
+            currentByteSource = null;
+        }
+
+        try {
+            currentUri = null;
+            currentUsbDevice = device;
+            
+            UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+            if (!usbManager.hasPermission(device)) {
+                Intent broadcastIntent = new Intent("com.generated.app.USB_PERMISSION");
+                broadcastIntent.setPackage(getPackageName());
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    flags |= PendingIntent.FLAG_MUTABLE;
+                }
+                PendingIntent pi = PendingIntent.getBroadcast(this, 0, broadcastIntent, flags);
+                usbManager.requestPermission(device, pi);
+            }
+
+            currentByteSource = new UsbMassStorageSource(this, device);
+            updateUIState();
+        } catch (Exception e) {
+            currentUsbDevice = null;
+            updateUIState();
+        }
+    }
+
+    private void updateUIState() {
+        if (currentUsbDevice != null && currentByteSource != null) {
+            String name = currentUsbDevice.getProductName() != null ? currentUsbDevice.getProductName() : "USB Card Reader";
+            long size = currentByteSource.getSize();
+            tvStatusTitle.setText(name);
+            tvStatusSubtitle.setText("גודל הכרטיס: " + formatSize(size));
+            btnScanCard.setVisibility(View.VISIBLE);
+        } else {
+            tvStatusTitle.setText(R.string.connect_card_prompt);
+            tvStatusSubtitle.setText("חבר קורא כרטיסים באמצעות USB OTG כדי להתחיל");
+            btnScanCard.setVisibility(View.GONE);
+        }
     }
 
     private void showUnfinishedRestoreDialog() {
@@ -394,6 +533,10 @@ public class MainActivity extends Activity {
     }
 
     private void proceedWithScan() {
+        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+        String currentDate = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(new Date());
+        prefs.edit().putString(PREF_LAST_SCAN_DATE, currentDate).putBoolean(PREF_HAS_SAVED_SCAN, true).apply();
+
         if (currentUri != null) {
             Intent intent = new Intent(MainActivity.this, ScanActivity.class);
             intent.putExtra(ScanActivity.EXTRA_URI, currentUri);
@@ -471,188 +614,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void openFileSelector() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        String[] mimeTypes = {"application/octet-stream", "application/x-image", "image/*"};
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
-        try {
-            startActivityForResult(intent, REQUEST_CODE_OPEN_DOCUMENT);
-        } catch (Exception e) {
-            Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void openUsbDeviceSelector() {
-        UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
-        HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
-        
-        final List<UsbDevice> validDevices = new ArrayList<>();
-        for (UsbDevice device : deviceList.values()) {
-            boolean isMassStorage = false;
-            for (int i = 0; i < device.getInterfaceCount(); i++) {
-                android.hardware.usb.UsbInterface intf = device.getInterface(i);
-                if (intf.getInterfaceClass() == 0x08) {
-                    isMassStorage = true;
-                    break;
-                }
-            }
-            if (isMassStorage || device.getInterfaceCount() > 0) {
-                validDevices.add(device);
-            }
-        }
-
-        if (validDevices.isEmpty()) {
-            Toast.makeText(this, R.string.no_usb_device_found, Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        final String[] deviceNames = new String[validDevices.size()];
-        for (int i = 0; i < validDevices.size(); i++) {
-            UsbDevice d = validDevices.get(i);
-            deviceNames[i] = (d.getProductName() != null ? d.getProductName() : "USB Device") + " (ID: " + d.getDeviceId() + ")";
-        }
-
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.select_usb_device)
-                .setItems(deviceNames, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        loadUsbDevice(validDevices.get(which));
-                    }
-                })
-                .show();
-    }
-
-    private void loadUsbDevice(UsbDevice device) {
-        if (currentByteSource != null) {
-            currentByteSource.close();
-            currentByteSource = null;
-        }
-
-        try {
-            currentUri = null;
-            currentUsbDevice = device;
-            
-            UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
-            if (!usbManager.hasPermission(device)) {
-                Intent broadcastIntent = new Intent("com.generated.app.USB_PERMISSION");
-                broadcastIntent.setPackage(getPackageName());
-                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    flags |= PendingIntent.FLAG_MUTABLE;
-                }
-                PendingIntent pi = PendingIntent.getBroadcast(this, 0, broadcastIntent, flags);
-                usbManager.requestPermission(device, pi);
-            }
-
-            currentByteSource = new UsbMassStorageSource(this, device);
-            
-            String displayName = device.getProductName() != null ? device.getProductName() : "USB Storage";
-            long size = currentByteSource.getSize();
-
-            tvFileName.setText(getString(R.string.file_name_label) + displayName);
-            tvFileSize.setText(getString(R.string.file_size_label) + formatSize(size));
-            btnStartScan.setEnabled(true);
-
-            Toast.makeText(this, "התקן זוהה בהצלחה: " + displayName, Toast.LENGTH_SHORT).show();
-
-        } catch (Exception e) {
-            currentUsbDevice = null;
-            List<String> logs = UsbMassStorageSource.getDiagnosticLogs();
-            StringBuilder sb = new StringBuilder();
-            sb.append("שגיאה בפתיחת התקן USB:\n").append(e.getMessage()).append("\n\nדוח אבחון:\n");
-            for (String log : logs) {
-                sb.append(log).append("\n");
-            }
-
-            TextView tvLog = new TextView(this);
-            tvLog.setText(sb.toString());
-            tvLog.setTextSize(12);
-            tvLog.setTextColor(0xFF333333);
-            tvLog.setTextIsSelectable(true);
-            int pad = (int) (12 * getResources().getDisplayMetrics().density);
-            tvLog.setPadding(pad, pad, pad, pad);
-
-            android.widget.ScrollView sv = new android.widget.ScrollView(this);
-            sv.addView(tvLog);
-
-            new AlertDialog.Builder(this)
-                    .setTitle("דוח אבחון USB")
-                    .setView(sv)
-                    .setPositiveButton(android.R.string.ok, null)
-                    .show();
-
-            tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
-            tvFileSize.setText(getString(R.string.file_size_label) + "-");
-            btnStartScan.setEnabled(false);
-        }
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_CODE_OPEN_DOCUMENT && resultCode == RESULT_OK) {
-            if (data != null) {
-                Uri uri = data.getData();
-                if (uri != null) {
-                    loadFile(uri);
-                }
-            }
-        }
-    }
-
-    private void loadFile(Uri uri) {
-        if (currentByteSource != null) {
-            currentByteSource.close();
-            currentByteSource = null;
-        }
-
-        try {
-            currentUri = uri;
-            currentUsbDevice = null;
-            currentByteSource = new FileImageSource(getContentResolver(), uri);
-            
-            String displayName = getOriginalFileName(uri);
-            long size = currentByteSource.getSize();
-
-            tvFileName.setText(getString(R.string.file_name_label) + displayName);
-            tvFileSize.setText(getString(R.string.file_size_label) + formatSize(size));
-            btnStartScan.setEnabled(true);
-
-        } catch (Exception e) {
-            currentUri = null;
-            Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_LONG).show();
-            tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
-            tvFileSize.setText(getString(R.string.file_size_label) + "-");
-            btnStartScan.setEnabled(false);
-        }
-    }
-
-    private String getOriginalFileName(Uri uri) {
-        String result = null;
-        if (uri.getScheme() != null && uri.getScheme().equals("content")) {
-            try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
-                if (cursor != null && cursor.moveToFirst()) {
-                    int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                    if (index != -1) {
-                        result = cursor.getString(index);
-                    }
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        if (result == null) {
-            result = uri.getPath();
-            int cut = result != null ? result.lastIndexOf('/') : -1;
-            if (cut != -1) {
-                result = result.substring(cut + 1);
-            }
-        }
-        return result != null ? result : "unknown_file";
-    }
-
     private String formatSize(long sizeBytes) {
         if (sizeBytes <= 0) return "0 בייט";
         final String[] units = new String[]{"בייט", "קילובייט", "מגהבייט", "ג׳יגהבייט", "טרהבייט"};
@@ -669,6 +630,7 @@ public class MainActivity extends Activity {
         } else {
             registerReceiver(detachReceiver, filter);
         }
+        checkForConnectedUsbDevice();
     }
 
     @Override

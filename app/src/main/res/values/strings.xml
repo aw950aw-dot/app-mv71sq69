@@ -36,4 +36,10 @@
     <string name="save_settings">שמור הגדרות</string>
     <string name="view_error_log">דוח שגיאות קריאה</string>
     <string name="error_log_title">דוח שגיאות קריאה בסקטורים</string>
+    <string name="connect_card_prompt">חבר את קורא הכרטיסים</string>
+    <string name="scan_card_button">סרוק את הכרטיס</string>
+    <string name="previous_scan_title">סריקה קודמת של כרטיס זה</string>
+    <string name="open_results">פתח תוצאות</string>
+    <string name="scan_again">סרוק שוב</string>
+    <string name="about_title">אודות</string>
 </resources>
