@@ -379,6 +379,7 @@ public class ScanService extends Service {
 
                     dbHelper.computeAndStoreFolderTotals();
                     dbHelper.updateJobState("scan", "COMPLETED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
+                    DiagnosticReporter.saveSummaryToDb(ScanService.this);
 
                 } catch (Exception e) {
                     DiagnosticReporter.logError(e, "Scan thread exception caught.");
@@ -391,6 +392,7 @@ public class ScanService extends Service {
                     filesCount.set(totalFiles);
                     foldersCount.set(totalFolders);
                     DiagnosticReporter.setFilesFoldersCounts(totalFiles, totalFolders);
+                    DiagnosticReporter.saveSummaryToDb(ScanService.this);
                     ServiceState.getInstance().update(ServiceState.Phase.SCAN_COMPLETED, totalFiles, totalFolders, totalBytesScanned.get(), currentFolderPath, 100, "", "");
                     broadcastCompleted(totalFiles);
                     if (byteSource != null) {

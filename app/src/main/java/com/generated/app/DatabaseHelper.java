@@ -14,7 +14,7 @@ import java.util.Map;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 13;
+    private static final int DATABASE_VERSION = 14;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -48,6 +48,25 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_JOB_FOLDERS = "folders";
     public static final String COL_JOB_FILES = "files";
     public static final String COL_JOB_BYTES = "bytes";
+
+    public static final String TABLE_SCAN_SUMMARY = "scan_summary";
+    public static final String COL_SUMMARY_ID = "id";
+    public static final String COL_SUMMARY_LUN = "lun_used";
+    public static final String COL_SUMMARY_PARTITION_INFO = "partition_info";
+    public static final String COL_SUMMARY_START_LBA = "start_lba";
+    public static final String COL_SUMMARY_BACKUP_BOOT = "backup_boot";
+    public static final String COL_SUMMARY_FS_TYPE = "fs_type";
+    public static final String COL_SUMMARY_BOOT_FIELDS = "boot_fields";
+    public static final String COL_SUMMARY_FIRST_DATA = "first_data";
+    public static final String COL_SUMMARY_ROOT_LBA = "root_lba";
+    public static final String COL_SUMMARY_FILES_COUNT = "files_count";
+    public static final String COL_SUMMARY_FOLDERS_COUNT = "folders_count";
+    public static final String COL_SUMMARY_LONG_NAMES = "long_names";
+    public static final String COL_SUMMARY_SHORT_NAMES = "short_names";
+    public static final String COL_SUMMARY_SKIPPED_GARBAGE = "skipped_garbage";
+    public static final String COL_SUMMARY_UNREADABLE_FOLDERS = "unreadable_folders";
+    public static final String COL_SUMMARY_ERROR_COUNT = "error_count";
+    public static final String COL_SUMMARY_FULL_REPORT = "full_report";
 
     private static DatabaseHelper instance;
 
@@ -113,7 +132,27 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_JOB_BYTES + " INTEGER)";
         db.execSQL(createJobState);
 
-        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '13')");
+        String createSummary = "CREATE TABLE " + TABLE_SCAN_SUMMARY + " (" +
+                COL_SUMMARY_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                COL_SUMMARY_LUN + " TEXT, " +
+                COL_SUMMARY_PARTITION_INFO + " TEXT, " +
+                COL_SUMMARY_START_LBA + " TEXT, " +
+                COL_SUMMARY_BACKUP_BOOT + " TEXT, " +
+                COL_SUMMARY_FS_TYPE + " TEXT, " +
+                COL_SUMMARY_BOOT_FIELDS + " TEXT, " +
+                COL_SUMMARY_FIRST_DATA + " TEXT, " +
+                COL_SUMMARY_ROOT_LBA + " TEXT, " +
+                COL_SUMMARY_FILES_COUNT + " INTEGER, " +
+                COL_SUMMARY_FOLDERS_COUNT + " INTEGER, " +
+                COL_SUMMARY_LONG_NAMES + " INTEGER, " +
+                COL_SUMMARY_SHORT_NAMES + " INTEGER, " +
+                COL_SUMMARY_SKIPPED_GARBAGE + " INTEGER, " +
+                COL_SUMMARY_UNREADABLE_FOLDERS + " INTEGER, " +
+                COL_SUMMARY_ERROR_COUNT + " INTEGER, " +
+                COL_SUMMARY_FULL_REPORT + " TEXT)";
+        db.execSQL(createSummary);
+
+        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '14')");
 
         db.execSQL("CREATE INDEX idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
         db.execSQL("CREATE INDEX idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
@@ -123,25 +162,88 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 13) {
+        if (oldVersion < 14) {
             try {
-                String createJobState = "CREATE TABLE IF NOT EXISTS " + TABLE_JOB_STATE + " (" +
-                        COL_JOB_TYPE + " TEXT PRIMARY KEY, " +
-                        COL_JOB_PHASE + " TEXT, " +
-                        COL_JOB_STARTED_AT + " INTEGER, " +
-                        COL_JOB_HEARTBEAT + " INTEGER, " +
-                        COL_JOB_FOLDERS + " INTEGER, " +
-                        COL_JOB_FILES + " INTEGER, " +
-                        COL_JOB_BYTES + " INTEGER)";
-                db.execSQL(createJobState);
-                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '13')");
+                String createSummary = "CREATE TABLE IF NOT EXISTS " + TABLE_SCAN_SUMMARY + " (" +
+                        COL_SUMMARY_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                        COL_SUMMARY_LUN + " TEXT, " +
+                        COL_SUMMARY_PARTITION_INFO + " TEXT, " +
+                        COL_SUMMARY_START_LBA + " TEXT, " +
+                        COL_SUMMARY_BACKUP_BOOT + " TEXT, " +
+                        COL_SUMMARY_FS_TYPE + " TEXT, " +
+                        COL_SUMMARY_BOOT_FIELDS + " TEXT, " +
+                        COL_SUMMARY_FIRST_DATA + " TEXT, " +
+                        COL_SUMMARY_ROOT_LBA + " TEXT, " +
+                        COL_SUMMARY_FILES_COUNT + " INTEGER, " +
+                        COL_SUMMARY_FOLDERS_COUNT + " INTEGER, " +
+                        COL_SUMMARY_LONG_NAMES + " INTEGER, " +
+                        COL_SUMMARY_SHORT_NAMES + " INTEGER, " +
+                        COL_SUMMARY_SKIPPED_GARBAGE + " INTEGER, " +
+                        COL_SUMMARY_UNREADABLE_FOLDERS + " INTEGER, " +
+                        COL_SUMMARY_ERROR_COUNT + " INTEGER, " +
+                        COL_SUMMARY_FULL_REPORT + " TEXT)";
+                db.execSQL(createSummary);
+                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '14')");
                 return;
             } catch (Exception ignored) {}
         }
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_NODES);
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_META);
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_JOB_STATE);
+        db.execSQL("DROP TABLE IF EXISTS " + TABLE_SCAN_SUMMARY);
         onCreate(db);
+    }
+
+    public synchronized void saveScanSummary(String lun, String partitionInfo, String startLba, String backupBoot,
+                                             String fsType, String bootFields, String firstData, String rootLba,
+                                             int filesCount, int foldersCount, int longNames, int shortNames,
+                                             int skippedGarbage, int unreadableFolders, int errorCount, String fullReport) {
+        SQLiteDatabase db = getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put(COL_SUMMARY_LUN, lun);
+        cv.put(COL_SUMMARY_PARTITION_INFO, partitionInfo);
+        cv.put(COL_SUMMARY_START_LBA, startLba);
+        cv.put(COL_SUMMARY_BACKUP_BOOT, backupBoot);
+        cv.put(COL_SUMMARY_FS_TYPE, fsType);
+        cv.put(COL_SUMMARY_BOOT_FIELDS, bootFields);
+        cv.put(COL_SUMMARY_FIRST_DATA, firstData);
+        cv.put(COL_SUMMARY_ROOT_LBA, rootLba);
+        cv.put(COL_SUMMARY_FILES_COUNT, filesCount);
+        cv.put(COL_SUMMARY_FOLDERS_COUNT, foldersCount);
+        cv.put(COL_SUMMARY_LONG_NAMES, longNames);
+        cv.put(COL_SUMMARY_SHORT_NAMES, shortNames);
+        cv.put(COL_SUMMARY_SKIPPED_GARBAGE, skippedGarbage);
+        cv.put(COL_SUMMARY_UNREADABLE_FOLDERS, unreadableFolders);
+        cv.put(COL_SUMMARY_ERROR_COUNT, errorCount);
+        cv.put(COL_SUMMARY_FULL_REPORT, fullReport);
+
+        db.beginTransaction();
+        try {
+            db.execSQL("DELETE FROM " + TABLE_SCAN_SUMMARY);
+            db.insert(TABLE_SCAN_SUMMARY, null, cv);
+            db.setTransactionSuccessful();
+        } catch (Exception ignored) {
+        } finally {
+            try { db.endTransaction(); } catch (Exception ignored) {}
+        }
+    }
+
+    public synchronized String getSavedScanReport() {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + COL_SUMMARY_FULL_REPORT + " FROM " + TABLE_SCAN_SUMMARY + " ORDER BY " + COL_SUMMARY_ID + " DESC LIMIT 1", null);
+        if (c != null) {
+            try {
+                if (c.moveToFirst()) {
+                    String report = c.getString(0);
+                    c.close();
+                    return report;
+                }
+            } catch (Exception ignored) {}
+            finally {
+                c.close();
+            }
+        }
+        return null;
     }
 
     public synchronized void updateJobState(String jobType, String phase, long startedAt, long heartbeat, int folders, int files, long bytes) {
@@ -206,7 +308,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 if (c.moveToFirst()) {
                     String ver = c.getString(0);
                     c.close();
-                    if ("13".equals(ver)) {
+                    if ("14".equals(ver)) {
                         return false;
                     }
                 } else {
@@ -237,7 +339,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("DELETE FROM " + TABLE_NODES);
             db.execSQL("DELETE FROM " + TABLE_JOB_STATE);
-            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '13')");
+            db.execSQL("DELETE FROM " + TABLE_SCAN_SUMMARY);
+            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '14')");
         } catch (Exception ignored) {}
         finally {
             PerformanceLogger.record("clearDatabase", System.currentTimeMillis() - start);

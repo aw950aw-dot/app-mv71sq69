@@ -139,7 +139,30 @@ public class DiagnosticReporter {
         lunUsed = lun;
     }
 
+    public static synchronized void saveSummaryToDb(Context context) {
+        if (context == null) return;
+        DatabaseHelper db = DatabaseHelper.getInstance(context);
+        String report = generateFullReportInternal(context);
+        db.saveScanSummary(
+                lunUsed, partitionInfo, chosenStartLba, backupBootSectorUsed,
+                fsTypeDetected, bootSectorFields, firstDataSector, rootDirLba,
+                filesFoundCount, foldersFoundCount, longNameCount, shortNameCount,
+                skippedGarbageCount, unreadableFoldersCount, errorCount, report
+        );
+    }
+
     public static synchronized String generateFullReport(Context context) {
+        if (context != null) {
+            DatabaseHelper db = DatabaseHelper.getInstance(context);
+            String saved = db.getSavedScanReport();
+            if (saved != null && !saved.isEmpty()) {
+                return saved;
+            }
+        }
+        return generateFullReportInternal(context);
+    }
+
+    private static String generateFullReportInternal(Context context) {
         DatabaseHelper db = context != null ? DatabaseHelper.getInstance(context) : null;
         StringBuilder sb = new StringBuilder();
         sb.append("=== דוח אבחון סריקה מקיף (SD Rescue) ===\n\n");
