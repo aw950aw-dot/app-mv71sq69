@@ -126,6 +126,11 @@ public class ScanService extends Service {
                 isScanRunning = true;
                 scanStartTime = System.currentTimeMillis();
 
+                // Ensure wakeLock is acquired for scan duration
+                if (wakeLock != null && !wakeLock.isHeld()) {
+                    wakeLock.acquire(4 * 60 * 60 * 1000L);
+                }
+
                 try {
                     if (uri != null) {
                         byteSource = new FileImageSource(getContentResolver(), uri);
@@ -211,7 +216,7 @@ public class ScanService extends Service {
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setProgress(0, 0, true) // Indeterminate for filesystem scan
+                .setProgress(0, 0, true)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "ביטול", cancelPendingIntent);
 
         return builder.build();
@@ -369,6 +374,14 @@ public class ScanService extends Service {
                     if (byteSource != null) {
                         byteSource.close();
                     }
+
+                    // Release wakeLock when scan completes
+                    if (wakeLock != null && wakeLock.isHeld()) {
+                        try {
+                            wakeLock.release();
+                        } catch (Exception ignored) {}
+                    }
+
                     stopSelf();
                 }
             }

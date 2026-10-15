@@ -16,8 +16,6 @@ import android.os.IBinder;
 import android.os.PowerManager;
 
 import java.io.OutputStream;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -122,6 +120,11 @@ public class RestoreService extends Service {
                 currentBytesRestored = 0;
                 currentPercent = 0;
                 failureCausesMap.clear();
+
+                // Ensure wakeLock is acquired for restore duration
+                if (wakeLock != null && !wakeLock.isHeld()) {
+                    wakeLock.acquire(4 * 60 * 60 * 1000L);
+                }
 
                 startForeground(NOTIFICATION_ID, createNotification("מתחיל שחזור קבצים...", 0, "מעבד נתונים..."));
 
@@ -230,21 +233,17 @@ public class RestoreService extends Service {
                     return;
                 }
 
-                // 1) Get all entries (folders and files) from DB to determine top-level selected items and subtrees
                 List<RecoveredEntry> allEntries = dbHelper.getAllEntriesForSaveAll();
                 Map<Long, RecoveredEntry> entryMap = new HashMap<>();
                 for (RecoveredEntry e : allEntries) {
                     entryMap.put(e.getId(), e);
                 }
 
-                // Determine top-level items: items that are selected (or saveAll means everything)
-                // and have no selected ancestor.
                 List<RecoveredEntry> topLevelItems = new ArrayList<>();
                 for (RecoveredEntry e : allEntries) {
                     boolean isSelected = saveAll || e.isSelected() || e.isPartial();
                     if (!isSelected) continue;
 
-                    // Check if any ancestor is selected
                     boolean hasSelectedAncestor = false;
                     long currParentId = e.getParentId();
                     while (currParentId != 0 && entryMap.containsKey(currParentId)) {
@@ -261,23 +260,14 @@ public class RestoreService extends Service {
                     }
                 }
 
-                // Map database folder IDs to destination DocumentFileCompat
                 HashMap<Long, DocumentFileCompat> folderMap = new HashMap<>();
-
-                // For top-level folders, create them directly under destination rootDir.
-                // For files, they are placed directly in rootDir if top-level, or inside their top-level parent folder.
-                // We order folders by depth (path length) top-down to ensure parents are created before children.
                 List<RecoveredEntry> orderedFolders = dbHelper.getOrderedFoldersForRestore(saveAll);
                 
-                // Filter and process folders that belong to selected subtrees or top-level items
                 Set<Long> validTopLevelIds = new HashSet<>();
                 for (RecoveredEntry tl : topLevelItems) {
                     validTopLevelIds.add(tl.getId());
                 }
 
-                // We need to create folder structure for all selected items / subtrees under their respective top-level items.
-                // Let's map each folder ID to its relative path from its top-level ancestor.
-                // Or even simpler: collect all entries whose ancestor chain leads to a top-level item.
                 Set<Long> allowedNodeIds = new HashSet<>();
                 for (RecoveredEntry tl : topLevelItems) {
                     allowedNodeIds.add(tl.getId());
@@ -291,9 +281,7 @@ public class RestoreService extends Service {
                     if (!allowedNodeIds.contains(folderEntry.getId())) continue;
 
                     try {
-                        // Check if this folder is a top-level item itself
                         if (validTopLevelIds.contains(folderEntry.getId())) {
-                            // Create directly under destination rootDir
                             String folderName = sanitizeFileName(folderEntry.getName());
                             DocumentFileCompat existing = rootDir.findFile(folderName);
                             if (existing != null && existing.canWrite()) {
@@ -324,7 +312,6 @@ public class RestoreService extends Service {
                                 }
                             }
                         } else {
-                            // Child folder inside another folder
                             long parentId = folderEntry.getParentId();
                             DocumentFileCompat parentDoc = folderMap.get(parentId);
                             if (parentDoc == null) {
@@ -369,18 +356,15 @@ public class RestoreService extends Service {
                     }
                 }
 
-                // 2) Collect all files to restore that are within allowedNodeIds
                 List<RecoveredEntry> allFiles = dbHelper.getFilesForRestore(saveAll);
                 List<RecoveredEntry> filesToRestore = new ArrayList<>();
                 for (RecoveredEntry fileEntry : allFiles) {
-                    // Check if file itself or any of its ancestors is in allowedNodeIds / topLevelItems
                     boolean shouldRestore = false;
                     if (saveAll) {
                         shouldRestore = true;
                     } else if (fileEntry.isSelected()) {
                         shouldRestore = true;
                     } else {
-                        // Check if parent chain has any allowed/selected node
                         long currParent = fileEntry.getParentId();
                         while (currParent != 0 && entryMap.containsKey(currParent)) {
                             if (allowedNodeIds.contains(currParent)) {
@@ -422,13 +406,11 @@ public class RestoreService extends Service {
                     currentFileName = entry.getName();
 
                     try {
-                        // Find parent DocumentFileCompat
                         DocumentFileCompat parentDoc = rootDir;
                         long parentId = entry.getParentId();
                         if (folderMap.containsKey(parentId)) {
                             parentDoc = folderMap.get(parentId);
                         } else {
-                            // If parent is a top-level file or direct root item
                             parentDoc = rootDir;
                         }
 
@@ -520,7 +502,7 @@ public class RestoreService extends Service {
             try {
                 long existingLen = existing.getLength();
                 if (existingLen == node.getLength() && existingLen >= 0) {
-                    return true; // Skip as already exists with same size
+                    return true;
                 }
             } catch (Exception ignored) {}
         }
@@ -632,6 +614,13 @@ public class RestoreService extends Service {
         if (byteSource != null) {
             byteSource.close();
             byteSource = null;
+        }
+
+        // Release wakeLock when restore completes
+        if (wakeLock != null && wakeLock.isHeld()) {
+            try {
+                wakeLock.release();
+            } catch (Exception ignored) {}
         }
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);

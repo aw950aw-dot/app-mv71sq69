@@ -89,6 +89,13 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
+        // Check if a scan or restore job is already running; if so, jump straight to ScanActivity
+        if (ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
+            startActivity(new Intent(this, ScanActivity.class));
+            finish();
+            return;
+        }
+
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread t, Throwable e) {
