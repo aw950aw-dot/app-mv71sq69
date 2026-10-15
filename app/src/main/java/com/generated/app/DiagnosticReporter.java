@@ -60,6 +60,7 @@ public class DiagnosticReporter {
         shortNameCount = 0;
         skippedGarbageCount = 0;
         unreadableFoldersCount = 0;
+        PerformanceLogger.clear();
     }
 
     public static synchronized void incrementLongName() { longNameCount++; }
@@ -186,7 +187,19 @@ public class DiagnosticReporter {
             }
         }
 
-        sb.append("16. 30 שמות קבצים ותיקיות ראשונים שנמצאו עם גודלם:\n");
+        sb.append("16. 20 פעולות DB וטעינה איטיות ביותר (>100ms):\n");
+        List<PerformanceLogger.Record> slowest = PerformanceLogger.getTop20Slowest();
+        if (slowest.isEmpty()) {
+            sb.append("(אין פעולות איטיות מעל 100ms)\n");
+        } else {
+            int pIdx = 1;
+            for (PerformanceLogger.Record rec : slowest) {
+                sb.append("  ").append(pIdx++).append(". [").append(rec.durationMs).append(" ms] ").append(rec.name).append("\n");
+            }
+        }
+        sb.append("\n");
+
+        sb.append("17. 30 שמות קבצים ותיקיות ראשונים שנמצאו עם גודלם:\n");
         if (firstFilesList.isEmpty()) {
             sb.append("(טרם נוספו קבצים לרשימה)\n");
         } else {
@@ -197,7 +210,7 @@ public class DiagnosticReporter {
         }
         sb.append("\n");
 
-        sb.append("17. שגיאות מקובצות לפי סיבה ומופעים:\n");
+        sb.append("18. שגיאות מקובצות לפי סיבה ומופעים:\n");
         if (errorCountsMap.isEmpty()) {
             sb.append("(אין שגיאות לתצוגה)\n");
         } else {

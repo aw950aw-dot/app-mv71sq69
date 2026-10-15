@@ -23,6 +23,7 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 public class SettingsActivity extends Activity {
 
@@ -32,6 +33,7 @@ public class SettingsActivity extends Activity {
 
     private TextView tvDestInfo;
     private TextView tvImageSourceInfo;
+    private TextView tvPerformanceLogInfo;
     private LinearLayout advancedContainer;
     private Button btnToggleAdvanced;
 
@@ -225,6 +227,9 @@ public class SettingsActivity extends Activity {
                 boolean isVis = advancedContainer.getVisibility() == View.VISIBLE;
                 advancedContainer.setVisibility(isVis ? View.GONE : View.VISIBLE);
                 btnToggleAdvanced.setText(isVis ? "הצג הגדרות מתקדמות ▼" : "הסתר הגדרות מתקדמות ▲");
+                if (!isVis) {
+                    updatePerformanceLogInfoText();
+                }
             }
         });
 
@@ -289,11 +294,41 @@ public class SettingsActivity extends Activity {
         destBtnLp.bottomMargin = 12;
         advancedContainer.addView(btnChangeDest, destBtnLp);
 
+        // Performance log section in Advanced
+        TextView tvPerfHeader = new TextView(this);
+        tvPerfHeader.setText("20 פעולות DB וטעינה איטיות ביותר (>100ms):");
+        tvPerfHeader.setTextSize(14);
+        tvPerfHeader.setTextColor(0xFF1976D2);
+        tvPerfHeader.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams perfHeadLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        perfHeadLp.topMargin = 8;
+        perfHeadLp.bottomMargin = 4;
+        advancedContainer.addView(tvPerfHeader, perfHeadLp);
+
+        tvPerformanceLogInfo = new TextView(this);
+        tvPerformanceLogInfo.setTextSize(12);
+        tvPerformanceLogInfo.setTextColor(0xFF444444);
+        tvPerformanceLogInfo.setBackgroundColor(0xFFF1F3F4);
+        tvPerformanceLogInfo.setPadding(8, 8, 8, 8);
+        updatePerformanceLogInfoText();
+        advancedContainer.addView(tvPerformanceLogInfo, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
         final CheckBox cbDeepScan = new CheckBox(this);
         cbDeepScan.setText(R.string.setting_deep_scan);
         cbDeepScan.setChecked(true);
         cbDeepScan.setTextSize(14);
-        advancedContainer.addView(cbDeepScan);
+        LinearLayout.LayoutParams cbDeepLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        cbDeepLp.topMargin = 12;
+        advancedContainer.addView(cbDeepScan, cbDeepLp);
 
         Button btnTestRestore = new Button(this);
         btnTestRestore.setText("Test Restore (בדיקת שחזור)");
@@ -458,6 +493,21 @@ public class SettingsActivity extends Activity {
             tvImageSourceInfo.setText("קובץ אימג׳ נוכחי: " + uriStr);
         } else {
             tvImageSourceInfo.setText("קובץ אימג׳ נוכחי: לא נבחר (ברירת מחדל: USB OTG)");
+        }
+    }
+
+    private void updatePerformanceLogInfoText() {
+        if (tvPerformanceLogInfo == null) return;
+        List<PerformanceLogger.Record> slowest = PerformanceLogger.getTop20Slowest();
+        if (slowest.isEmpty()) {
+            tvPerformanceLogInfo.setText("(אין פעולות איטיות מעל 100ms שנרשמו עד כה)");
+        } else {
+            StringBuilder sb = new StringBuilder();
+            int idx = 1;
+            for (PerformanceLogger.Record rec : slowest) {
+                sb.append(idx++).append(". [").append(rec.durationMs).append(" ms] ").append(rec.name).append("\n");
+            }
+            tvPerformanceLogInfo.setText(sb.toString().trim());
         }
     }
 

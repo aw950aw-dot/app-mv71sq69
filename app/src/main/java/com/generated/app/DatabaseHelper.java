@@ -124,6 +124,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public synchronized boolean isOlderVersionDb() {
+        long start = System.currentTimeMillis();
         try {
             SQLiteDatabase db = getReadableDatabase();
             Cursor c = db.rawQuery("SELECT " + COL_META_VAL + " FROM " + TABLE_META + " WHERE " + COL_META_KEY + "=?", new String[]{"db_version"});
@@ -150,19 +151,27 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 }
             }
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("isOlderVersionDb", System.currentTimeMillis() - start);
+        }
         return false;
     }
 
     public synchronized void clearDatabase() {
+        long start = System.currentTimeMillis();
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("DELETE FROM " + TABLE_NODES);
             db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("clearDatabase", System.currentTimeMillis() - start);
+        }
     }
 
     public synchronized void insertEntriesInBatch(List<RecoveredEntry> entries) {
         if (entries == null || entries.isEmpty()) return;
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -193,10 +202,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             DiagnosticReporter.logError(e, "Database batch insert failed");
         } finally {
             try { db.endTransaction(); } catch (Exception ignored) {}
+            PerformanceLogger.record("insertEntriesInBatch", System.currentTimeMillis() - start);
         }
     }
 
     public synchronized void computeAndStoreFolderTotals() {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -254,17 +265,23 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             DiagnosticReporter.logError(e, "Failed to compute and store folder totals");
         } finally {
             try { db.endTransaction(); } catch (Exception ignored) {}
+            PerformanceLogger.record("computeAndStoreFolderTotals", System.currentTimeMillis() - start);
         }
     }
 
     public synchronized void updateRestoreStatus(long nodeId, int status) {
+        long start = System.currentTimeMillis();
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_RESTORE_STATUS + "=? WHERE " + COL_ID + "=?", new Object[]{status, nodeId});
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("updateRestoreStatus", System.currentTimeMillis() - start);
+        }
     }
 
     public synchronized boolean hasUnfinishedRestore() {
+        long start = System.currentTimeMillis();
         try {
             SQLiteDatabase db = getReadableDatabase();
             Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1 AND " + COL_RESTORE_STATUS + "!=1", null);
@@ -287,10 +304,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 }
             }
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("hasUnfinishedRestore", System.currentTimeMillis() - start);
+        }
         return false;
     }
 
     public synchronized int[] getRestoreQueueStats() {
+        long start = System.currentTimeMillis();
         int done = 0;
         int total = 0;
         try {
@@ -306,27 +327,37 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 cTotal.close();
             }
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("getRestoreQueueStats", System.currentTimeMillis() - start);
+        }
         return new int[]{done, total};
     }
 
     public synchronized void clearRestoreQueue() {
+        long start = System.currentTimeMillis();
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_RESTORE_STATUS + "=0");
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("clearRestoreQueue", System.currentTimeMillis() - start);
+        }
     }
 
     public synchronized long getRootId() {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new String[]{"/", ""});
         if (c != null) {
             if (c.moveToFirst()) {
                 long id = c.getLong(0);
                 c.close();
+                PerformanceLogger.record("getRootId", System.currentTimeMillis() - start);
                 return id;
             }
             c.close();
         }
+        PerformanceLogger.record("getRootId", System.currentTimeMillis() - start);
         return 1L;
     }
 
@@ -335,6 +366,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public synchronized List<RecoveredEntry> getChildrenOfDirectoryPaged(long parentId, long lastId, int limit) {
+        long start = System.currentTimeMillis();
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
@@ -379,10 +411,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getChildrenOfDirectoryPaged", System.currentTimeMillis() - start);
         return list;
     }
 
     public synchronized int getChildrenCountForNode(long nodeId) {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=?", new String[]{String.valueOf(nodeId)});
         int count = 0;
@@ -392,10 +426,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getChildrenCountForNode", System.currentTimeMillis() - start);
         return count;
     }
 
     public synchronized int getOrphansCount() {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " c WHERE c." + COL_PARENT_ID + " != 0 AND c." + COL_PARENT_ID + " NOT IN (SELECT " + COL_ID + " FROM " + TABLE_NODES + ")", null);
         int count = 0;
@@ -405,10 +441,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getOrphansCount", System.currentTimeMillis() - start);
         return count;
     }
 
     public synchronized List<RecoveredEntry> searchNodes(String query) {
+        long start = System.currentTimeMillis();
         List<RecoveredEntry> list = new ArrayList<>();
         if (query == null || query.trim().isEmpty()) return list;
         SQLiteDatabase db = getReadableDatabase();
@@ -433,7 +471,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getLong(17);
+                long totalSize = c.getInt(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -452,10 +490,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("searchNodes", System.currentTimeMillis() - start);
         return list;
     }
 
     public synchronized void setNodeAndSubtreeSelected(RecoveredEntry entry, int selectedState) {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -470,6 +510,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             db.setTransactionSuccessful();
         } catch (Exception ignored) {} finally {
             try { db.endTransaction(); } catch (Exception ignored) {}
+            PerformanceLogger.record("setNodeAndSubtreeSelected", System.currentTimeMillis() - start);
         }
     }
 
@@ -512,14 +553,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     }
 
     public synchronized void setAllSelected(boolean selected) {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getWritableDatabase();
         int st = selected ? 1 : 0;
         try {
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=?", new Object[]{st});
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("setAllSelected", System.currentTimeMillis() - start);
+        }
     }
 
     public synchronized void setCategorySelected(String categoryKey, boolean selected) {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getWritableDatabase();
         int st = selected ? 1 : 0;
         try {
@@ -529,9 +575,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=?", new Object[]{st});
             }
         } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("setCategorySelected", System.currentTimeMillis() - start);
+        }
     }
 
     public synchronized long[] getSelectedStats() {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         long filesCount = 0;
         long totalBytes = 0;
@@ -543,10 +593,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getSelectedStats", System.currentTimeMillis() - start);
         return new long[]{filesCount, totalBytes};
     }
 
     public synchronized Map<String, long[]> getCategoryStats() {
+        long start = System.currentTimeMillis();
         Map<String, long[]> map = new HashMap<>();
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT " + COL_CATEGORY + ", COUNT(*), SUM(" + COL_SIZE + ") FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 GROUP BY " + COL_CATEGORY, null);
@@ -561,10 +613,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getCategoryStats", System.currentTimeMillis() - start);
         return map;
     }
 
     public synchronized List<RecoveredEntry> getAllEntriesForSaveAll() {
+        long start = System.currentTimeMillis();
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
@@ -606,10 +660,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getAllEntriesForSaveAll", System.currentTimeMillis() - start);
         return list;
     }
 
     public synchronized List<RecoveredEntry> getOrderedFoldersForRestore(boolean saveAll) {
+        long start = System.currentTimeMillis();
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=1") : (COL_IS_DIR + "=1 AND " + COL_SELECTED + "!=0");
@@ -652,10 +708,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getOrderedFoldersForRestore", System.currentTimeMillis() - start);
         return list;
     }
 
     public synchronized List<RecoveredEntry> getFilesForRestore(boolean saveAll) {
+        long start = System.currentTimeMillis();
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=0") : (COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1");
@@ -698,10 +756,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
+        PerformanceLogger.record("getFilesForRestore", System.currentTimeMillis() - start);
         return list;
     }
 
     public synchronized long getParentId(String path, String name) {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         if (path == null || path.isEmpty()) path = "/";
         Cursor c = db.rawQuery("SELECT " + COL_PARENT_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new String[]{path, name});
@@ -709,14 +769,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             if (c.moveToFirst()) {
                 long pid = c.getLong(0);
                 c.close();
+                PerformanceLogger.record("getParentId", System.currentTimeMillis() - start);
                 return pid;
             }
             c.close();
         }
+        PerformanceLogger.record("getParentId", System.currentTimeMillis() - start);
         return -1;
     }
 
     public synchronized long getNodeId(String path, String name) {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         if (path == null || path.isEmpty()) path = "/";
         Cursor c = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new String[]{path, name});
@@ -724,14 +787,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             if (c.moveToFirst()) {
                 long id = c.getLong(0);
                 c.close();
+                PerformanceLogger.record("getNodeId", System.currentTimeMillis() - start);
                 return id;
             }
             c.close();
         }
+        PerformanceLogger.record("getNodeId", System.currentTimeMillis() - start);
         return -1;
     }
 
     public synchronized int getTotalFilesCount() {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0", null);
         int count = 0;
@@ -739,10 +805,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             if (c.moveToFirst()) count = c.getInt(0);
             c.close();
         }
+        PerformanceLogger.record("getTotalFilesCount", System.currentTimeMillis() - start);
         return count;
     }
 
     public synchronized int getTotalFoldersCount() {
+        long start = System.currentTimeMillis();
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=1", null);
         int count = 0;
@@ -750,6 +818,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             if (c.moveToFirst()) count = c.getInt(0);
             c.close();
         }
+        PerformanceLogger.record("getTotalFoldersCount", System.currentTimeMillis() - start);
         return count;
     }
 }
