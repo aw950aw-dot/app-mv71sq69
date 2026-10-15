@@ -275,7 +275,7 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
         root.setBackgroundColor(0xFFF8F9FA);
 
-        // --- Screen 1: Scan / Progress Screen (Safe, plain layout: title, folders and files counters, elapsed time, Cancel button) ---
+        // --- Screen 1: Scan / Progress Screen ---
         layoutScanScreen = new LinearLayout(this);
         layoutScanScreen.setOrientation(LinearLayout.VERTICAL);
         layoutScanScreen.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -295,7 +295,6 @@ public class ScanActivity extends Activity {
         thLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         layoutScanScreen.addView(tvScanHeader, thLp);
 
-        // Safe ScanAnimationView container with try/catch fallback per requirement
         int animWidth = (int) (240 * getResources().getDisplayMetrics().density);
         int animHeight = (int) (160 * getResources().getDisplayMetrics().density);
         animationContainer = new FrameLayout(this);
@@ -613,7 +612,7 @@ public class ScanActivity extends Activity {
             }).start();
         });
 
-        // --- Screen 3: Folder Browser Screen ---
+        // --- Screen 3: Folder Browser Screen with Overlay FrameLayout for Spinner ---
         layoutFolderBrowser = new LinearLayout(this);
         layoutFolderBrowser.setOrientation(LinearLayout.VERTICAL);
         layoutFolderBrowser.setLayoutParams(new LinearLayout.LayoutParams(
@@ -684,18 +683,23 @@ public class ScanActivity extends Activity {
         btnDeselectAllBrowser.setBackgroundColor(0xFFE0E0E0);
         selActionLayout.addView(btnDeselectAllBrowser, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-        browserLoadingProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
-        LinearLayout.LayoutParams bProgLp = new LinearLayout.LayoutParams(
-                (int)(48 * getResources().getDisplayMetrics().density),
-                (int)(48 * getResources().getDisplayMetrics().density));
-        bProgLp.gravity = Gravity.CENTER;
-        bProgLp.topMargin = 32;
-        layoutFolderBrowser.addView(browserLoadingProgress, bProgLp);
-        browserLoadingProgress.setVisibility(View.GONE);
+        // Overlay FrameLayout containing list view and centered progress bar
+        FrameLayout browserListContainer = new FrameLayout(this);
+        LinearLayout.LayoutParams frameLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        layoutFolderBrowser.addView(browserListContainer, frameLp);
 
         listViewBrowser = new ListView(this);
-        layoutFolderBrowser.addView(listViewBrowser, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
+        browserListContainer.addView(listViewBrowser, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        browserLoadingProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
+        FrameLayout.LayoutParams bProgLp = new FrameLayout.LayoutParams(
+                (int)(48 * getResources().getDisplayMetrics().density),
+                (int)(48 * getResources().getDisplayMetrics().density),
+                Gravity.CENTER);
+        browserListContainer.addView(browserLoadingProgress, bProgLp);
+        browserLoadingProgress.setVisibility(View.GONE);
 
         browserAdapter = new TreeEntryAdapter();
         listViewBrowser.setAdapter(browserAdapter);
@@ -890,15 +894,17 @@ public class ScanActivity extends Activity {
         }
 
         isSearching = true;
-        browserLoadingProgress.setVisibility(View.VISIBLE);
+        runOnUiThread(() -> {
+            if (browserLoadingProgress != null) browserLoadingProgress.setVisibility(View.VISIBLE);
+        });
         new Thread(() -> {
             final List<RecoveredEntry> results = dbHelper.searchNodes(query);
             final List<RecoveredEntry> limitedResults = results.size() > 200 ? results.subList(0, 200) : results;
-            new Handler(Looper.getMainLooper()).post(() -> {
-                browserLoadingProgress.setVisibility(View.GONE);
+            runOnUiThread(() -> {
+                if (browserLoadingProgress != null) browserLoadingProgress.setVisibility(View.GONE);
                 searchResults = limitedResults;
                 currentDirEntries = searchResults;
-                browserAdapter.notifyDataSetChanged();
+                if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
             });
         }).start();
     }
@@ -906,14 +912,16 @@ public class ScanActivity extends Activity {
     private void updateSelectionCounterAndBottomBar() {
         new Thread(() -> {
             final long[] stats = dbHelper.getSelectedStats();
-            new Handler(Looper.getMainLooper()).post(() -> {
+            runOnUiThread(() -> {
                 long files = stats[0];
                 long bytes = stats[1];
                 if (files > 0) {
-                    bottomBarRestore.setVisibility(View.VISIBLE);
-                    tvRestoreSelectionInfo.setText(String.format(Locale.getDefault(), "%d פריטים · %s", files, formatSize(bytes)));
+                    if (bottomBarRestore != null) bottomBarRestore.setVisibility(View.VISIBLE);
+                    if (tvRestoreSelectionInfo != null) {
+                        tvRestoreSelectionInfo.setText(String.format(Locale.getDefault(), "%d פריטים · %s", files, formatSize(bytes)));
+                    }
                 } else {
-                    bottomBarRestore.setVisibility(View.GONE);
+                    if (bottomBarRestore != null) bottomBarRestore.setVisibility(View.GONE);
                 }
             });
         }).start();
@@ -921,15 +929,17 @@ public class ScanActivity extends Activity {
 
     private void reloadCurrentDirectoryFromDb() {
         if (isSearching) return;
-        browserLoadingProgress.setVisibility(View.VISIBLE);
+        runOnUiThread(() -> {
+            if (browserLoadingProgress != null) browserLoadingProgress.setVisibility(View.VISIBLE);
+        });
         new Thread(() -> {
             final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId);
-            new Handler(Looper.getMainLooper()).post(() -> {
-                browserLoadingProgress.setVisibility(View.GONE);
+            runOnUiThread(() -> {
+                if (browserLoadingProgress != null) browserLoadingProgress.setVisibility(View.GONE);
                 currentDirEntries = list;
                 updateBreadcrumbBar();
                 updateSelectionCounterAndBottomBar();
-                browserAdapter.notifyDataSetChanged();
+                if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
             });
         }).start();
     }
@@ -950,7 +960,7 @@ public class ScanActivity extends Activity {
             currentDirPath = "/";
             new Thread(() -> {
                 currentParentId = dbHelper.getRootId();
-                new Handler(Looper.getMainLooper()).post(() -> {
+                runOnUiThread(() -> {
                     updateBreadcrumbBar();
                     reloadCurrentDirectoryFromDb();
                 });
@@ -985,7 +995,7 @@ public class ScanActivity extends Activity {
                 currentDirPath = targetPath;
                 new Thread(() -> {
                     long foundId = dbHelper.getNodeId(targetPath.substring(0, targetPath.lastIndexOf('/')), part);
-                    new Handler(Looper.getMainLooper()).post(() -> {
+                    runOnUiThread(() -> {
                         if (foundId != -1) {
                             currentParentId = foundId;
                         }
@@ -1017,7 +1027,7 @@ public class ScanActivity extends Activity {
                     currentDirPath = "/";
                     new Thread(() -> {
                         currentParentId = dbHelper.getRootId();
-                        new Handler(Looper.getMainLooper()).post(() -> {
+                        runOnUiThread(() -> {
                             updateBreadcrumbBar();
                             reloadCurrentDirectoryFromDb();
                         });
@@ -1029,7 +1039,7 @@ public class ScanActivity extends Activity {
                     new Thread(() -> {
                         long pid = dbHelper.getParentId(parentPath, folderName);
                         long rootId = dbHelper.getRootId();
-                        new Handler(Looper.getMainLooper()).post(() -> {
+                        runOnUiThread(() -> {
                             if (pid != -1) currentParentId = pid;
                             else currentParentId = rootId;
                             updateBreadcrumbBar();
@@ -1117,7 +1127,7 @@ public class ScanActivity extends Activity {
                 if (out != null) {
                     String report = DiagnosticReporter.generateFullReport(this);
                     out.write(report.getBytes(StandardCharsets.UTF_8));
-                    new Handler(Looper.getMainLooper()).post(() ->
+                    runOnUiThread(() ->
                             Toast.makeText(this, "הדוח נשמר בהצלחה כקובץ טקסט", Toast.LENGTH_SHORT).show()
                     );
                 }
@@ -1133,7 +1143,7 @@ public class ScanActivity extends Activity {
     private void showScanDetailsDialog() {
         new Thread(() -> {
             String report = DiagnosticReporter.generateFullReport(this);
-            new Handler(Looper.getMainLooper()).post(() -> {
+            runOnUiThread(() -> {
                 TextView tv = new TextView(this);
                 tv.setText(report);
                 tv.setTextSize(12);
@@ -1290,7 +1300,9 @@ public class ScanActivity extends Activity {
             checkBox.setChecked(entry.isSelected());
             checkBox.setOnClickListener(v -> {
                 boolean newState = checkBox.isChecked();
-                browserLoadingProgress.setVisibility(View.VISIBLE);
+                runOnUiThread(() -> {
+                    if (browserLoadingProgress != null) browserLoadingProgress.setVisibility(View.VISIBLE);
+                });
                 new Thread(() -> {
                     dbHelper.setNodeAndSubtreeSelected(entry, newState ? 1 : 0);
                     updateSelectionCounterAndBottomBar();
