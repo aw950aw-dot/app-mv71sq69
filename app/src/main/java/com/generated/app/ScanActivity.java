@@ -741,6 +741,8 @@ public class ScanActivity extends Activity {
         });
 
         btnExecuteRestore.setOnClickListener(v -> promptForSaveDirectory(false));
+
+        setContentView(root);
     }
 
     private void switchUiMode(int mode) {
