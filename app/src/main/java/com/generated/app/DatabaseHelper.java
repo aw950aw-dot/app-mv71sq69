@@ -7,12 +7,14 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 10; // Upgraded for category column
+    private static final int DATABASE_VERSION = 11; // Upgraded for category index and backfill
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -88,7 +90,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_META_VAL + " TEXT)";
         db.execSQL(createMeta);
 
-        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '10')");
+        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '11')");
 
         db.execSQL("CREATE INDEX idx_parent ON " + TABLE_NODES + "(" + COL_PARENT_ID + ")");
         db.execSQL("CREATE INDEX idx_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
@@ -100,15 +102,28 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 10) {
+        if (oldVersion < 11) {
             try {
                 if (oldVersion < 9) {
                     db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_RESTORE_STATUS + " INTEGER DEFAULT 0");
                     db.execSQL("CREATE INDEX IF NOT EXISTS idx_restore ON " + TABLE_NODES + "(" + COL_RESTORE_STATUS + ")");
                 }
-                db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_CATEGORY + " TEXT");
+                if (oldVersion < 10) {
+                    db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_CATEGORY + " TEXT");
+                }
                 db.execSQL("CREATE INDEX IF NOT EXISTS idx_category ON " + TABLE_NODES + "(" + COL_CATEGORY + ")");
-                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '10')");
+
+                // Fill category with one UPDATE for saved scans from before this change
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_CATEGORY + " = CASE " +
+                        "WHEN " + COL_IS_DIR + " = 1 THEN NULL " +
+                        "WHEN " + COL_NAME + " LIKE '%.jpg' OR " + COL_NAME + " LIKE '%.jpeg' OR " + COL_NAME + " LIKE '%.png' OR " + COL_NAME + " LIKE '%.gif' OR " + COL_NAME + " LIKE '%.webp' OR " + COL_NAME + " LIKE '%.heic' OR " + COL_NAME + " LIKE '%.bmp' OR " + COL_NAME + " LIKE '%.dng' THEN 'PHOTOS' " +
+                        "WHEN " + COL_NAME + " LIKE '%.mp4' OR " + COL_NAME + " LIKE '%.mov' OR " + COL_NAME + " LIKE '%.mkv' OR " + COL_NAME + " LIKE '%.avi' OR " + COL_NAME + " LIKE '%.3gp' OR " + COL_NAME + " LIKE '%.webm' OR " + COL_NAME + " LIKE '%.m4v' OR " + COL_NAME + " LIKE '%.mpg' OR " + COL_NAME + " LIKE '%.mpeg' OR " + COL_NAME + " LIKE '%.mts' THEN 'VIDEOS' " +
+                        "WHEN " + COL_NAME + " LIKE '%.mp3' OR " + COL_NAME + " LIKE '%.m4a' OR " + COL_NAME + " LIKE '%.aac' OR " + COL_NAME + " LIKE '%.wav' OR " + COL_NAME + " LIKE '%.flac' OR " + COL_NAME + " LIKE '%.ogg' OR " + COL_NAME + " LIKE '%.opus' OR " + COL_NAME + " LIKE '%.wma' OR " + COL_NAME + " LIKE '%.amr' THEN 'MUSIC' " +
+                        "WHEN " + COL_NAME + " LIKE '%.pdf' OR " + COL_NAME + " LIKE '%.doc' OR " + COL_NAME + " LIKE '%.docx' OR " + COL_NAME + " LIKE '%.xls' OR " + COL_NAME + " LIKE '%.xlsx' OR " + COL_NAME + " LIKE '%.ppt' OR " + COL_NAME + " LIKE '%.pptx' OR " + COL_NAME + " LIKE '%.txt' OR " + COL_NAME + " LIKE '%.odt' OR " + COL_NAME + " LIKE '%.rtf' OR " + COL_NAME + " LIKE '%.csv' THEN 'DOCUMENTS' " +
+                        "WHEN " + COL_NAME + " LIKE '%.zip' OR " + COL_NAME + " LIKE '%.rar' OR " + COL_NAME + " LIKE '%.7z' OR " + COL_NAME + " LIKE '%.apk' THEN 'ARCHIVES_APPS' " +
+                        "ELSE 'OTHER' END WHERE " + COL_CATEGORY + " IS NULL");
+
+                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '11')");
                 return;
             } catch (Exception ignored) {}
         }
@@ -125,7 +140,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 if (c.moveToFirst()) {
                     String ver = c.getString(0);
                     c.close();
-                    if ("10".equals(ver)) {
+                    if ("11".equals(ver)) {
                         return false;
                     }
                 } else {
@@ -151,7 +166,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("DELETE FROM " + TABLE_NODES);
-            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '10')");
+            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '11')");
         } catch (Exception ignored) {}
     }
 
@@ -509,6 +524,24 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             c.close();
         }
         return new long[]{filesCount, totalBytes};
+    }
+
+    public synchronized Map<String, long[]> getCategoryStats() {
+        Map<String, long[]> map = new HashMap<>();
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + COL_CATEGORY + ", COUNT(*), SUM(" + COL_SIZE + ") FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 GROUP BY " + COL_CATEGORY, null);
+        if (c != null) {
+            while (c.moveToNext()) {
+                String cat = c.getString(0);
+                long count = c.getLong(1);
+                long size = c.getLong(2);
+                if (cat != null) {
+                    map.put(cat, new long[]{count, size});
+                }
+            }
+            c.close();
+        }
+        return map;
     }
 
     public synchronized List<RecoveredEntry> getAllEntriesForSaveAll() {

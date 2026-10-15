@@ -169,6 +169,21 @@ public class DiagnosticReporter {
             sb.append("• Root Parent ID: 0\n");
             sb.append("• Root Children Count: ").append(rootChildrenCount).append("\n");
             sb.append("nodes: ").append(totalNodesCount).append(", orphans: ").append(orphansCount).append("\n\n");
+
+            sb.append("--- פילוח לפי קטגוריות (Category Group By Stats) ---\n");
+            Map<String, long[]> catStats = db.getCategoryStats();
+            if (catStats.isEmpty()) {
+                sb.append("(אין נתונים קטגוריאליים)\n\n");
+            } else {
+                for (Map.Entry<String, long[]> entry : catStats.entrySet()) {
+                    String catName = entry.getKey();
+                    long[] val = entry.getValue();
+                    long count = val[0];
+                    long size = val[1];
+                    sb.append("• ").append(catName).append(": ").append(count).append(" קבצים, ").append(size).append(" בייטס\n");
+                }
+                sb.append("\n");
+            }
         }
 
         sb.append("16. 30 שמות קבצים ותיקיות ראשונים שנמצאו עם גודלם:\n");
