@@ -366,6 +366,9 @@ public class ScanService extends Service {
                         });
                     }
 
+                    // Requested feature: Compute the number of files and total size of every folder ONCE at the end of the scan
+                    dbHelper.computeAndStoreFolderTotals();
+
                 } catch (Exception e) {
                     DiagnosticReporter.logError(e, "Scan thread exception caught.");
                     ServiceState.getInstance().update(ServiceState.Phase.IDLE, filesCount.get(), foldersCount.get(), totalBytesScanned.get(), currentFolderPath, 0, "", e.getMessage());

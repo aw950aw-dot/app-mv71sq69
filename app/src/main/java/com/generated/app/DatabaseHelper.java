@@ -14,7 +14,7 @@ import java.util.Map;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 11;
+    private static final int DATABASE_VERSION = 12;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -33,6 +33,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_FIRST_CLUSTER = "first_cluster";
     public static final String COL_RESTORE_STATUS = "restore_status";
     public static final String COL_CATEGORY = "category";
+    public static final String COL_FILE_COUNT = "file_count";
+    public static final String COL_TOTAL_SIZE = "total_size";
 
     private static final String TABLE_META = "metadata";
     private static final String COL_META_KEY = "key";
@@ -82,7 +84,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_UNREADABLE_REASON + " TEXT, " +
                 COL_FIRST_CLUSTER + " INTEGER DEFAULT 0, " +
                 COL_RESTORE_STATUS + " INTEGER DEFAULT 0, " +
-                COL_CATEGORY + " TEXT)";
+                COL_CATEGORY + " TEXT, " +
+                COL_FILE_COUNT + " INTEGER DEFAULT 0, " +
+                COL_TOTAL_SIZE + " INTEGER DEFAULT 0)";
         db.execSQL(createTable);
 
         String createMeta = "CREATE TABLE " + TABLE_META + " (" +
@@ -90,39 +94,28 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_META_VAL + " TEXT)";
         db.execSQL(createMeta);
 
-        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '11')");
+        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
 
-        db.execSQL("CREATE INDEX idx_parent ON " + TABLE_NODES + "(" + COL_PARENT_ID + ")");
-        db.execSQL("CREATE INDEX idx_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
-        db.execSQL("CREATE INDEX idx_name ON " + TABLE_NODES + "(" + COL_NAME + ")");
-        db.execSQL("CREATE INDEX idx_cluster ON " + TABLE_NODES + "(" + COL_FIRST_CLUSTER + ")");
-        db.execSQL("CREATE INDEX idx_restore ON " + TABLE_NODES + "(" + COL_RESTORE_STATUS + ")");
-        db.execSQL("CREATE INDEX idx_category ON " + TABLE_NODES + "(" + COL_CATEGORY + ")");
+        // Requested Indexes: 1) nodes(parent_id, is_dir, name), nodes(category, name), nodes(selected)
+        db.execSQL("CREATE INDEX idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
+        db.execSQL("CREATE INDEX idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
+        db.execSQL("CREATE INDEX idx_nodes_selected ON " + TABLE_NODES + "(" + COL_SELECTED + ")");
+        db.execSQL("CREATE INDEX idx_nodes_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 11) {
+        if (oldVersion < 12) {
             try {
-                if (oldVersion < 9) {
-                    db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_RESTORE_STATUS + " INTEGER DEFAULT 0");
-                    db.execSQL("CREATE INDEX IF NOT EXISTS idx_restore ON " + TABLE_NODES + "(" + COL_RESTORE_STATUS + ")");
-                }
-                if (oldVersion < 10) {
-                    db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_CATEGORY + " TEXT");
-                }
-                db.execSQL("CREATE INDEX IF NOT EXISTS idx_category ON " + TABLE_NODES + "(" + COL_CATEGORY + ")");
+                db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_FILE_COUNT + " INTEGER DEFAULT 0");
+                db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_TOTAL_SIZE + " INTEGER DEFAULT 0");
 
-                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_CATEGORY + " = CASE " +
-                        "WHEN " + COL_IS_DIR + " = 1 THEN NULL " +
-                        "WHEN " + COL_NAME + " LIKE '%.jpg' OR " + COL_NAME + " LIKE '%.jpeg' OR " + COL_NAME + " LIKE '%.png' OR " + COL_NAME + " LIKE '%.gif' OR " + COL_NAME + " LIKE '%.webp' OR " + COL_NAME + " LIKE '%.heic' OR " + COL_NAME + " LIKE '%.bmp' OR " + COL_NAME + " LIKE '%.dng' THEN 'PHOTOS' " +
-                        "WHEN " + COL_NAME + " LIKE '%.mp4' OR " + COL_NAME + " LIKE '%.mov' OR " + COL_NAME + " LIKE '%.mkv' OR " + COL_NAME + " LIKE '%.avi' OR " + COL_NAME + " LIKE '%.3gp' OR " + COL_NAME + " LIKE '%.webm' OR " + COL_NAME + " LIKE '%.m4v' OR " + COL_NAME + " LIKE '%.mpg' OR " + COL_NAME + " LIKE '%.mpeg' OR " + COL_NAME + " LIKE '%.mts' THEN 'VIDEOS' " +
-                        "WHEN " + COL_NAME + " LIKE '%.mp3' OR " + COL_NAME + " LIKE '%.m4a' OR " + COL_NAME + " LIKE '%.aac' OR " + COL_NAME + " LIKE '%.wav' OR " + COL_NAME + " LIKE '%.flac' OR " + COL_NAME + " LIKE '%.ogg' OR " + COL_NAME + " LIKE '%.opus' OR " + COL_NAME + " LIKE '%.wma' OR " + COL_NAME + " LIKE '%.amr' THEN 'MUSIC' " +
-                        "WHEN " + COL_NAME + " LIKE '%.pdf' OR " + COL_NAME + " LIKE '%.doc' OR " + COL_NAME + " LIKE '%.docx' OR " + COL_NAME + " LIKE '%.xls' OR " + COL_NAME + " LIKE '%.xlsx' OR " + COL_NAME + " LIKE '%.ppt' OR " + COL_NAME + " LIKE '%.pptx' OR " + COL_NAME + " LIKE '%.txt' OR " + COL_NAME + " LIKE '%.odt' OR " + COL_NAME + " LIKE '%.rtf' OR " + COL_NAME + " LIKE '%.csv' THEN 'DOCUMENTS' " +
-                        "WHEN " + COL_NAME + " LIKE '%.zip' OR " + COL_NAME + " LIKE '%.rar' OR " + COL_NAME + " LIKE '%.7z' OR " + COL_NAME + " LIKE '%.apk' THEN 'ARCHIVES_APPS' " +
-                        "ELSE 'OTHER' END WHERE " + COL_CATEGORY + " IS NULL");
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_selected ON " + TABLE_NODES + "(" + COL_SELECTED + ")");
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
 
-                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '11')");
+                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
                 return;
             } catch (Exception ignored) {}
         }
@@ -139,7 +132,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 if (c.moveToFirst()) {
                     String ver = c.getString(0);
                     c.close();
-                    if ("11".equals(ver)) {
+                    if ("12".equals(ver)) {
                         return false;
                     }
                 } else {
@@ -165,7 +158,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("DELETE FROM " + TABLE_NODES);
-            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '11')");
+            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
         } catch (Exception ignored) {}
     }
 
@@ -192,11 +185,83 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 cv.put(COL_FIRST_CLUSTER, entry.getFirstCluster());
                 cv.put(COL_RESTORE_STATUS, entry.getRestoreStatus());
                 cv.put(COL_CATEGORY, entry.getCategory());
+                cv.put(COL_FILE_COUNT, entry.getCachedRecursiveFileCount());
+                cv.put(COL_TOTAL_SIZE, entry.getCachedRecursiveSize());
                 db.insertWithOnConflict(TABLE_NODES, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
             }
             db.setTransactionSuccessful();
         } catch (Exception e) {
             DiagnosticReporter.logError(e, "Database batch insert failed");
+        } finally {
+            try { db.endTransaction(); } catch (Exception ignored) {}
+        }
+    }
+
+    // Requested feature: Compute folder totals once from deepest level up and store in columns file_count and total_size
+    public synchronized void computeAndStoreFolderTotals() {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            // First reset all folders file_count and total_size to 0
+            db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_FILE_COUNT + "=0, " + COL_TOTAL_SIZE + "=0 WHERE " + COL_IS_DIR + "=1");
+
+            // For each file (is_dir=0), add its size (1 file, size) directly to its immediate parent,
+            // then recursively propagate up the tree or iterate by depth level.
+            // Since we want robust and lightning fast performance, we fetch all nodes into memory (id, parent_id, is_dir, size)
+            // and compute bottom-up in RAM, then batch update.
+            Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_SIZE + FROM + TABLE_NODES, null);
+            if (c != null) {
+                Map<Long, Long> parentMap = new HashMap<>();
+                Map<Long, Boolean> isDirMap = new HashMap<>();
+                Map<Long, Long> fileSizeMap = new HashMap<>();
+                List<Long> allNodeIds = new ArrayList<>();
+                List<Long> folderIds = new ArrayList<>();
+
+                while (c.moveToNext()) {
+                    long id = c.getLong(0);
+                    long pId = c.getLong(1);
+                    boolean isDir = c.getInt(2) == 1;
+                    long size = c.getLong(3);
+
+                    allNodeIds.add(id);
+                    parentMap.put(id, pId);
+                    isDirMap.put(id, isDir);
+                    if (!isDir) {
+                        fileSizeMap.put(id, size);
+                    } else {
+                        folderIds.add(id);
+                    }
+                }
+                c.close();
+
+                Map<Long, Integer> folderFileCount = new HashMap<>();
+                Map<Long, Long> folderTotalSize = new HashMap<>();
+
+                // Helper to get depth or process bottom-up by sorting folders descending by path length or id
+                // Bottom-up aggregation: files contribute 1 count and their size to their parent, grandparent, etc.
+                for (Map.Entry<Long, Long> entry : fileSizeMap.entrySet()) {
+                    long fileId = entry.getKey();
+                    long fSize = entry.getValue();
+
+                    long currParent = parentMap.get(fileId);
+                    while (currParent != 0 && parentMap.containsKey(currParent)) {
+                        folderFileCount.put(currParent, folderFileCount.getOrDefault(currParent, 0) + 1);
+                        folderTotalSize.put(currParent, folderTotalSize.getOrDefault(currParent, 0L) + fSize);
+                        currParent = parentMap.get(currParent);
+                    }
+                }
+
+                // Batch update folder stats
+                for (long fId : folderIds) {
+                    int count = folderFileCount.getOrDefault(fId, 0);
+                    long size = folderTotalSize.getOrDefault(fId, 0L);
+                    db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_FILE_COUNT + "=?, " + COL_TOTAL_SIZE + "=? WHERE " + COL_ID + "=?", new Object[]{count, size, fId});
+                }
+            }
+
+            db.setTransactionSuccessful();
+        } catch (Exception e) {
+            DiagnosticReporter.logError(e, "Failed to compute and store folder totals");
         } finally {
             try { db.endTransaction(); } catch (Exception ignored) {}
         }
@@ -279,7 +344,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 1000", new String[]{String.valueOf(parentId)});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 1000", new String[]{String.valueOf(parentId)});
         
         if (c != null) {
             while (c.moveToNext()) {
@@ -299,6 +364,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 long firstCluster = c.getLong(13);
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
+                int fileCount = c.getInt(16);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -312,43 +379,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setRestoreStatus(restoreStatus);
                 entry.setCategory(category);
 
-                if (isDir) {
-                    long[] stats = getRecursiveStatsSql(db, id);
-                    entry.setCachedRecursiveSize(stats[0]);
-                    entry.setCachedRecursiveFileCount((int) stats[1]);
-                }
+                // Read directly from stored columns - no recursive query!
+                entry.setCachedRecursiveSize(totalSize);
+                entry.setCachedRecursiveFileCount(fileCount);
 
                 list.add(entry);
             }
             c.close();
         }
         return list;
-    }
-
-    private long[] getRecursiveStatsSql(SQLiteDatabase db, long folderId) {
-        long totalSize = 0;
-        int fileCount = 0;
-        String query = "WITH RECURSIVE sub(id, size, is_dir) AS (" +
-                "  SELECT id, size, is_dir FROM " + TABLE_NODES + " WHERE parent_id = ?" +
-                "  UNION ALL" +
-                "  SELECT n.id, n.size, n.is_dir FROM " + TABLE_NODES + " n JOIN sub s ON n.parent_id = s.id" +
-                ") SELECT SUM(size), COUNT(*) FROM sub WHERE is_dir = 0";
-        
-        Cursor c = null;
-        try {
-            c = db.rawQuery(query, new String[]{String.valueOf(folderId)});
-            if (c != null && c.moveToFirst()) {
-                totalSize = c.getLong(0);
-                fileCount = c.getInt(1);
-            }
-        } catch (Exception ignored) {
-            try {
-                if (c != null) c.close();
-            } catch (Exception ignored2) {}
-        } finally {
-            if (c != null) c.close();
-        }
-        return new long[]{totalSize, fileCount};
     }
 
     public synchronized int getChildrenCountForNode(long nodeId) {
@@ -382,7 +421,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (query == null || query.trim().isEmpty()) return list;
         SQLiteDatabase db = getReadableDatabase();
         String pattern = "%" + query.trim() + "%";
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + " FROM " + TABLE_NODES + " WHERE " + COL_NAME + " LIKE ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 100", new String[]{pattern});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_NAME + " LIKE ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 100", new String[]{pattern});
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -401,6 +440,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 long firstCluster = c.getLong(13);
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
+                int fileCount = c.getInt(16);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -413,6 +454,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setUnreadableReason(unreadableReason);
                 entry.setRestoreStatus(restoreStatus);
                 entry.setCategory(category);
+                entry.setCachedRecursiveSize(totalSize);
+                entry.setCachedRecursiveFileCount(fileCount);
                 list.add(entry);
             }
             c.close();
@@ -532,7 +575,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public synchronized List<RecoveredEntry> getAllEntriesForSaveAll() {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -551,6 +594,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 long firstCluster = c.getLong(13);
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
+                int fileCount = c.getInt(16);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -563,6 +608,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setUnreadableReason(unreadableReason);
                 entry.setRestoreStatus(restoreStatus);
                 entry.setCategory(category);
+                entry.setCachedRecursiveSize(totalSize);
+                entry.setCachedRecursiveFileCount(fileCount);
                 list.add(entry);
             }
             c.close();
@@ -574,7 +621,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=1") : (COL_IS_DIR + "=1 AND " + COL_SELECTED + "!=0");
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY LENGTH(" + COL_PATH + ") ASC, " + COL_PARENT_ID + " ASC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY LENGTH(" + COL_PATH + ") ASC, " + COL_PARENT_ID + " ASC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -593,6 +640,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 long firstCluster = c.getLong(13);
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
+                int fileCount = c.getInt(16);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -605,6 +654,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setUnreadableReason(unreadableReason);
                 entry.setRestoreStatus(restoreStatus);
                 entry.setCategory(category);
+                entry.setCachedRecursiveSize(totalSize);
+                entry.setCachedRecursiveFileCount(fileCount);
                 list.add(entry);
             }
             c.close();
@@ -616,7 +667,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=0") : (COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1");
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY " + COL_PATH + " ASC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY " + COL_PATH + " ASC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -635,6 +686,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 long firstCluster = c.getLong(13);
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
+                int fileCount = c.getInt(16);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -647,6 +700,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setUnreadableReason(unreadableReason);
                 entry.setRestoreStatus(restoreStatus);
                 entry.setCategory(category);
+                entry.setCachedRecursiveSize(totalSize);
+                entry.setCachedRecursiveFileCount(fileCount);
                 list.add(entry);
             }
             c.close();
