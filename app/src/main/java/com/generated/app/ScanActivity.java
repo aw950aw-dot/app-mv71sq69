@@ -59,7 +59,7 @@ public class ScanActivity extends Activity {
     private LinearLayout layoutScanScreen;
     private TextView tvScanStatus;
     private TextView tvScanLiveCounters;
-    private ProgressBar scanCircularProgress;
+    private ScanAnimationView scanAnimationView;
     private Button btnCancelScan;
     private Button btnToggleTechDetails;
     private LinearLayout layoutTechDetailsContainer;
@@ -245,14 +245,17 @@ public class ScanActivity extends Activity {
         tvScanHeader.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams thLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        thLp.bottomMargin = (int) (32 * getResources().getDisplayMetrics().density);
+        thLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         layoutScanScreen.addView(tvScanHeader, thLp);
 
-        scanCircularProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
-        int pSize = (int) (80 * getResources().getDisplayMetrics().density);
-        LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(pSize, pSize);
-        pbLp.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
-        layoutScanScreen.addView(scanCircularProgress, pbLp);
+        // Add custom ScanAnimationView (~240dp x 160dp)
+        int animWidth = (int) (240 * getResources().getDisplayMetrics().density);
+        int animHeight = (int) (160 * getResources().getDisplayMetrics().density);
+        scanAnimationView = new ScanAnimationView(this);
+        LinearLayout.LayoutParams animLp = new LinearLayout.LayoutParams(animWidth, animHeight);
+        animLp.gravity = Gravity.CENTER;
+        animLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        layoutScanScreen.addView(scanAnimationView, animLp);
 
         tvScanStatus = new TextView(this);
         tvScanStatus.setText("מתחבר לסריקה...");
@@ -262,7 +265,7 @@ public class ScanActivity extends Activity {
         tvScanStatus.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams stLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        stLp.bottomMargin = 12;
+        stLp.bottomMargin = 8;
         layoutScanScreen.addView(tvScanStatus, stLp);
 
         tvScanLiveCounters = new TextView(this);
@@ -272,18 +275,18 @@ public class ScanActivity extends Activity {
         tvScanLiveCounters.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams cntLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        cntLp.bottomMargin = (int) (24 * getResources().getDisplayMetrics().density);
+        cntLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         layoutScanScreen.addView(tvScanLiveCounters, cntLp);
 
         btnCancelScan = new Button(this);
         btnCancelScan.setText(R.string.cancel_scan);
         btnCancelScan.setTextColor(0xFFD32F2F);
         btnCancelScan.setBackgroundColor(0xFFFFEBEE);
-        int btnPad = (int) (14 * getResources().getDisplayMetrics().density);
+        int btnPad = (int) (12 * getResources().getDisplayMetrics().density);
         btnCancelScan.setPadding(btnPad, btnPad, btnPad, btnPad);
         LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        cancelLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+        cancelLp.bottomMargin = (int) (12 * getResources().getDisplayMetrics().density);
         layoutScanScreen.addView(btnCancelScan, cancelLp);
 
         btnCancelScan.setOnClickListener(v -> {
