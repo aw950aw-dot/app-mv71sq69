@@ -96,7 +96,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
 
-        // Requested Indexes: 1) nodes(parent_id, is_dir, name), nodes(category, name), nodes(selected)
         db.execSQL("CREATE INDEX idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
         db.execSQL("CREATE INDEX idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
         db.execSQL("CREATE INDEX idx_nodes_selected ON " + TABLE_NODES + "(" + COL_SELECTED + ")");
@@ -197,18 +196,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
-    // Requested feature: Compute folder totals once from deepest level up and store in columns file_count and total_size
     public synchronized void computeAndStoreFolderTotals() {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            // First reset all folders file_count and total_size to 0
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_FILE_COUNT + "=0, " + COL_TOTAL_SIZE + "=0 WHERE " + COL_IS_DIR + "=1");
 
-            // For each file (is_dir=0), add its size (1 file, size) directly to its immediate parent,
-            // then recursively propagate up the tree or iterate by depth level.
-            // Since we want robust and lightning fast performance, we fetch all nodes into memory (id, parent_id, is_dir, size)
-            // and compute bottom-up in RAM, then batch update.
             Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_SIZE + " FROM " + TABLE_NODES, null);
             if (c != null) {
                 Map<Long, Long> parentMap = new HashMap<>();
@@ -237,8 +230,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 Map<Long, Integer> folderFileCount = new HashMap<>();
                 Map<Long, Long> folderTotalSize = new HashMap<>();
 
-                // Helper to get depth or process bottom-up by sorting folders descending by path length or id
-                // Bottom-up aggregation: files contribute 1 count and their size to their parent, grandparent, etc.
                 for (Map.Entry<Long, Long> entry : fileSizeMap.entrySet()) {
                     long fileId = entry.getKey();
                     long fSize = entry.getValue();
@@ -251,7 +242,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     }
                 }
 
-                // Batch update folder stats
                 for (long fId : folderIds) {
                     int count = folderFileCount.getOrDefault(fId, 0);
                     long size = folderTotalSize.getOrDefault(fId, 0L);
@@ -340,11 +330,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return 1L;
     }
 
+    // Upgraded method using keeset paging (LIMIT 100)
     public synchronized List<RecoveredEntry> getChildrenOfDirectory(long parentId) {
+        return getChildrenOfDirectoryPaged(parentId, 0, 100);
+    }
+
+    public synchronized List<RecoveredEntry> getChildrenOfDirectoryPaged(long parentId, long lastId, int limit) {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 1000", new String[]{String.valueOf(parentId)});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? AND " + COL_ID + " > ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT " + limit, new String[]{String.valueOf(parentId), String.valueOf(lastId)});
         
         if (c != null) {
             while (c.moveToNext()) {
@@ -378,8 +373,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setUnreadableReason(unreadableReason);
                 entry.setRestoreStatus(restoreStatus);
                 entry.setCategory(category);
-
-                // Read directly from stored columns - no recursive query!
                 entry.setCachedRecursiveSize(totalSize);
                 entry.setCachedRecursiveFileCount(fileCount);
 

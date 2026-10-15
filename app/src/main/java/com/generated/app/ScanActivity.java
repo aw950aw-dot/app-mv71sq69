@@ -20,17 +20,21 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.DiffUtil;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.ListAdapter;
+import androidx.recyclerview.widget.RecyclerView;
 
 import java.io.OutputStream;
 import java.io.PrintWriter;
@@ -81,7 +85,7 @@ public class ScanActivity extends Activity {
     private EditText etSearchBrowser;
     private Button btnSelectAllBrowser;
     private Button btnDeselectAllBrowser;
-    private ListView listViewBrowser;
+    private RecyclerView recyclerViewBrowser;
     private ProgressBar browserLoadingProgress;
     private LinearLayout bottomBarRestore;
     private TextView tvRestoreSelectionInfo;
@@ -602,27 +606,13 @@ public class ScanActivity extends Activity {
         layoutFolderBrowser.addView(browserLoadingProgress, bProgLp);
         browserLoadingProgress.setVisibility(View.GONE);
 
-        listViewBrowser = new ListView(this);
-        layoutFolderBrowser.addView(listViewBrowser, new LinearLayout.LayoutParams(
+        recyclerViewBrowser = new RecyclerView(this);
+        recyclerViewBrowser.setLayoutManager(new LinearLayoutManager(this));
+        layoutFolderBrowser.addView(recyclerViewBrowser, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
         browserAdapter = new TreeEntryAdapter();
-        listViewBrowser.setAdapter(browserAdapter);
-
-        listViewBrowser.setOnItemClickListener((parent, view, position, id) -> {
-            if (position >= currentDirEntries.size()) return;
-            RecoveredEntry clicked = currentDirEntries.get(position);
-            if (clicked != null && clicked.isDirectory()) {
-                isSearching = false;
-                etSearchBrowser.setText("");
-                currentParentId = clicked.getId();
-                currentDirPath = currentDirPath.equals("/") ? "/" + clicked.getName() : currentDirPath + "/" + clicked.getName();
-                updateBreadcrumbBar();
-                reloadCurrentDirectoryFromDb();
-            } else if (clicked != null && !clicked.isDirectory()) {
-                showRawBytesHexDialog(clicked);
-            }
-        });
+        recyclerViewBrowser.setAdapter(browserAdapter);
 
         bottomBarRestore = new LinearLayout(this);
         bottomBarRestore.setOrientation(LinearLayout.HORIZONTAL);
@@ -809,7 +799,7 @@ public class ScanActivity extends Activity {
                 browserLoadingProgress.setVisibility(View.GONE);
                 searchResults = results;
                 currentDirEntries = searchResults;
-                browserAdapter.notifyDataSetChanged();
+                browserAdapter.submitList(new ArrayList<>(currentDirEntries));
             });
         }).start();
     }
@@ -840,7 +830,7 @@ public class ScanActivity extends Activity {
                 currentDirEntries = list;
                 updateBreadcrumbBar();
                 updateSelectionCounterAndBottomBar();
-                browserAdapter.notifyDataSetChanged();
+                browserAdapter.submitList(new ArrayList<>(currentDirEntries));
             });
         }).start();
     }
@@ -1141,76 +1131,87 @@ public class ScanActivity extends Activity {
                 .show();
     }
 
-    private class TreeEntryAdapter extends BaseAdapter {
+    private static class TreeEntryDiffCallback extends DiffUtil.ItemCallback<RecoveredEntry> {
         @Override
-        public int getCount() {
-            return currentDirEntries.size();
+        public boolean areItemsTheSame(@NonNull RecoveredEntry oldItem, @NonNull RecoveredEntry newItem) {
+            return oldItem.getId() == newItem.getId();
         }
+
         @Override
-        public Object getItem(int position) {
-            return currentDirEntries.get(position);
+        public boolean areContentsTheSame(@NonNull RecoveredEntry oldItem, @NonNull RecoveredEntry newItem) {
+            return oldItem.getId() == newItem.getId() &&
+                    oldItem.isSelected() == newItem.isSelected() &&
+                    oldItem.getName().equals(newItem.getName()) &&
+                    oldItem.getLength() == newItem.getLength() &&
+                    oldItem.isDirectory() == newItem.isDirectory();
         }
+    }
+
+    private class TreeEntryAdapter extends ListAdapter<RecoveredEntry, TreeEntryAdapter.TreeEntryViewHolder> {
+
+        protected TreeEntryAdapter() {
+            super(new TreeEntryDiffCallback());
+            setHasStableIds(true);
+        }
+
         @Override
         public long getItemId(int position) {
-            return position;
+            RecoveredEntry item = getItem(position);
+            return item != null ? item.getId() : position;
+        }
+
+        @NonNull
+        @Override
+        public TreeEntryViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            // Flat row layout with a single container to prevent nested layout performance overhead
+            LinearLayout itemLayout = new LinearLayout(ScanActivity.this);
+            itemLayout.setOrientation(LinearLayout.HORIZONTAL);
+            itemLayout.setGravity(Gravity.CENTER_VERTICAL);
+            itemLayout.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            int pad = (int) (12 * getResources().getDisplayMetrics().density);
+            itemLayout.setPadding(pad, pad, pad, pad);
+            itemLayout.setBackgroundColor(0xFFFFFFFF);
+            itemLayout.setLayoutParams(new RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT,
+                    RecyclerView.LayoutParams.WRAP_CONTENT
+            ));
+
+            CheckBox checkBox = new CheckBox(ScanActivity.this);
+            checkBox.setFocusable(false);
+            checkBox.setClickable(true);
+            itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+            ImageView ivIcon = new ImageView(ScanActivity.this);
+            int iconSize = (int) (36 * getResources().getDisplayMetrics().density);
+            LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(iconSize, iconSize);
+            imgParams.leftMargin = pad;
+            imgParams.rightMargin = pad;
+            ivIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            itemLayout.addView(ivIcon, imgParams);
+
+            LinearLayout textLayout = new LinearLayout(ScanActivity.this);
+            textLayout.setOrientation(LinearLayout.VERTICAL);
+            itemLayout.addView(textLayout, new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+
+            TextView tvName = new TextView(ScanActivity.this);
+            tvName.setTextSize(15);
+            tvName.setTextColor(0xFF333333);
+            textLayout.addView(tvName);
+
+            TextView tvDetails = new TextView(ScanActivity.this);
+            tvDetails.setTextSize(13);
+            tvDetails.setTextColor(0xFF757575);
+            textLayout.addView(tvDetails);
+
+            return new TreeEntryViewHolder(itemLayout, checkBox, ivIcon, tvName, tvDetails);
         }
 
         @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
-            LinearLayout itemLayout;
-            ViewHolder holder;
-
-            if (convertView == null) {
-                itemLayout = new LinearLayout(ScanActivity.this);
-                itemLayout.setOrientation(LinearLayout.HORIZONTAL);
-                itemLayout.setGravity(Gravity.CENTER_VERTICAL);
-                itemLayout.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-                int pad = (int) (12 * getResources().getDisplayMetrics().density);
-                itemLayout.setPadding(pad, pad, pad, pad);
-                itemLayout.setBackgroundColor(0xFFFFFFFF);
-
-                CheckBox checkBox = new CheckBox(ScanActivity.this);
-                checkBox.setFocusable(false);
-                checkBox.setClickable(true);
-                itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-                ImageView ivIcon = new ImageView(ScanActivity.this);
-                int iconSize = (int) (36 * getResources().getDisplayMetrics().density);
-                LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(iconSize, iconSize);
-                imgParams.leftMargin = pad;
-                imgParams.rightMargin = pad;
-                ivIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                itemLayout.addView(ivIcon, imgParams);
-
-                LinearLayout textLayout = new LinearLayout(ScanActivity.this);
-                textLayout.setOrientation(LinearLayout.VERTICAL);
-                itemLayout.addView(textLayout, new LinearLayout.LayoutParams(
-                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-
-                TextView tvName = new TextView(ScanActivity.this);
-                tvName.setTextSize(15);
-                tvName.setTextColor(0xFF333333);
-                textLayout.addView(tvName);
-
-                TextView tvDetails = new TextView(ScanActivity.this);
-                tvDetails.setTextSize(13);
-                tvDetails.setTextColor(0xFF757575);
-                textLayout.addView(tvDetails);
-
-                holder = new ViewHolder();
-                holder.checkBox = checkBox;
-                holder.ivIcon = ivIcon;
-                holder.tvName = tvName;
-                holder.tvDetails = tvDetails;
-                itemLayout.setTag(holder);
-            } else {
-                itemLayout = (LinearLayout) convertView;
-                holder = (ViewHolder) itemLayout.getTag();
-            }
-
-            final RecoveredEntry entry = (RecoveredEntry) getItem(position);
-            if (entry == null) return itemLayout;
+        public void onBindViewHolder(@NonNull TreeEntryViewHolder holder, int position) {
+            final RecoveredEntry entry = getItem(position);
+            if (entry == null) return;
 
             holder.checkBox.setChecked(entry.isSelected());
             holder.checkBox.setOnClickListener(v -> {
@@ -1237,14 +1238,33 @@ public class ScanActivity extends Activity {
                 holder.ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
             }
 
-            return itemLayout;
+            holder.itemView.setOnClickListener(v -> {
+                if (entry.isDirectory()) {
+                    isSearching = false;
+                    etSearchBrowser.setText("");
+                    currentParentId = entry.getId();
+                    currentDirPath = currentDirPath.equals("/") ? "/" + entry.getName() : currentDirPath + "/" + entry.getName();
+                    updateBreadcrumbBar();
+                    reloadCurrentDirectoryFromDb();
+                } else {
+                    showRawBytesHexDialog(entry);
+                }
+            });
         }
 
-        class ViewHolder {
-            CheckBox checkBox;
-            ImageView ivIcon;
-            TextView tvName;
-            TextView tvDetails;
+        class TreeEntryViewHolder extends RecyclerView.ViewHolder {
+            final CheckBox checkBox;
+            final ImageView ivIcon;
+            final TextView tvName;
+            final TextView tvDetails;
+
+            TreeEntryViewHolder(View itemView, CheckBox checkBox, ImageView ivIcon, TextView tvName, TextView tvDetails) {
+                super(itemView);
+                this.checkBox = checkBox;
+                this.ivIcon = ivIcon;
+                this.tvName = tvName;
+                this.tvDetails = tvDetails;
+            }
         }
     }
 
