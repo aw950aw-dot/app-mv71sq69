@@ -12,7 +12,7 @@ import java.util.List;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 8; // Upgraded for unreadable reason tracking
+    private static final int DATABASE_VERSION = 9; // Upgraded for restore queue state tracking
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -29,6 +29,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_UNREADABLE = "unreadable";
     public static final String COL_UNREADABLE_REASON = "unreadable_reason";
     public static final String COL_FIRST_CLUSTER = "first_cluster";
+    public static final String COL_RESTORE_STATUS = "restore_status"; // 0=pending, 1=done, 2=failed
 
     private static final String TABLE_META = "metadata";
     private static final String COL_META_KEY = "key";
@@ -76,7 +77,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_RAW_NAME + " BLOB, " +
                 COL_UNREADABLE + " INTEGER DEFAULT 0, " +
                 COL_UNREADABLE_REASON + " TEXT, " +
-                COL_FIRST_CLUSTER + " INTEGER DEFAULT 0)";
+                COL_FIRST_CLUSTER + " INTEGER DEFAULT 0, " +
+                COL_RESTORE_STATUS + " INTEGER DEFAULT 0)";
         db.execSQL(createTable);
 
         String createMeta = "CREATE TABLE " + TABLE_META + " (" +
@@ -84,16 +86,25 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_META_VAL + " TEXT)";
         db.execSQL(createMeta);
 
-        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '8')");
+        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '9')");
 
         db.execSQL("CREATE INDEX idx_parent ON " + TABLE_NODES + "(" + COL_PARENT_ID + ")");
         db.execSQL("CREATE INDEX idx_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
         db.execSQL("CREATE INDEX idx_name ON " + TABLE_NODES + "(" + COL_NAME + ")");
         db.execSQL("CREATE INDEX idx_cluster ON " + TABLE_NODES + "(" + COL_FIRST_CLUSTER + ")");
+        db.execSQL("CREATE INDEX idx_restore ON " + TABLE_NODES + "(" + COL_RESTORE_STATUS + ")");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion < 9) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_RESTORE_STATUS + " INTEGER DEFAULT 0");
+                db.execSQL("CREATE INDEX idx_restore ON " + TABLE_NODES + "(" + COL_RESTORE_STATUS + ")");
+                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '9')");
+                return;
+            } catch (Exception ignored) {}
+        }
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_NODES);
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_META);
         onCreate(db);
@@ -107,7 +118,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 if (c.moveToFirst()) {
                     String ver = c.getString(0);
                     c.close();
-                    if ("8".equals(ver)) {
+                    if ("9".equals(ver)) {
                         return false;
                     }
                 } else {
@@ -133,7 +144,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("DELETE FROM " + TABLE_NODES);
-            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '8')");
+            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '9')");
         } catch (Exception ignored) {}
     }
 
@@ -158,6 +169,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 cv.put(COL_UNREADABLE, entry.isUnreadable() ? 1 : 0);
                 cv.put(COL_UNREADABLE_REASON, entry.getUnreadableReason());
                 cv.put(COL_FIRST_CLUSTER, entry.getFirstCluster());
+                cv.put(COL_RESTORE_STATUS, entry.getRestoreStatus());
                 db.insertWithOnConflict(TABLE_NODES, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
             }
             db.setTransactionSuccessful();
@@ -166,6 +178,65 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         } finally {
             try { db.endTransaction(); } catch (Exception ignored) {}
         }
+    }
+
+    public synchronized void updateRestoreStatus(long nodeId, int status) {
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_RESTORE_STATUS + "=? WHERE " + COL_ID + "=?", new Object[]{status, nodeId});
+        } catch (Exception ignored) {}
+    }
+
+    public synchronized boolean hasUnfinishedRestore() {
+        try {
+            SQLiteDatabase db = getReadableDatabase();
+            Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1 AND " + COL_RESTORE_STATUS + "!=1", null);
+            if (c != null) {
+                int count = 0;
+                if (c.moveToFirst()) {
+                    count = c.getInt(0);
+                }
+                c.close();
+                if (count > 0) {
+                    Cursor totalC = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1", null);
+                    if (totalC != null) {
+                        int total = 0;
+                        if (totalC.moveToFirst()) {
+                            total = totalC.getInt(0);
+                        }
+                        totalC.close();
+                        return total > 0;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    public synchronized int[] getRestoreQueueStats() {
+        int done = 0;
+        int total = 0;
+        try {
+            SQLiteDatabase db = getReadableDatabase();
+            Cursor cDone = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1 AND " + COL_RESTORE_STATUS + "=1", null);
+            if (cDone != null) {
+                if (cDone.moveToFirst()) done = cDone.getInt(0);
+                cDone.close();
+            }
+            Cursor cTotal = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1", null);
+            if (cTotal != null) {
+                if (cTotal.moveToFirst()) total = cTotal.getInt(0);
+                cTotal.close();
+            }
+        } catch (Exception ignored) {}
+        return new int[]{done, total};
+    }
+
+    public synchronized void clearRestoreQueue() {
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_RESTORE_STATUS + "=0");
+        } catch (Exception ignored) {}
     }
 
     public synchronized long getRootId() {
@@ -186,7 +257,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 1000", new String[]{String.valueOf(parentId)});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 1000", new String[]{String.valueOf(parentId)});
         
         if (c != null) {
             while (c.moveToNext()) {
@@ -204,6 +275,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 boolean isUnreadable = c.getInt(11) == 1;
                 String unreadableReason = c.getString(12);
                 long firstCluster = c.getLong(13);
+                int restoreStatus = c.getInt(14);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -214,6 +286,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 entry.setUnreadableReason(unreadableReason);
+                entry.setRestoreStatus(restoreStatus);
 
                 if (isDir) {
                     long[] stats = getRecursiveStatsSql(db, id);
@@ -311,7 +384,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (query == null || query.trim().isEmpty()) return list;
         SQLiteDatabase db = getReadableDatabase();
         String pattern = "%" + query.trim() + "%";
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + COL_NAME + " LIKE ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 100", new String[]{pattern});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + " FROM " + TABLE_NODES + " WHERE " + COL_NAME + " LIKE ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT 100", new String[]{pattern});
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -328,6 +401,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 boolean isUnreadable = c.getInt(11) == 1;
                 String unreadableReason = c.getString(12);
                 long firstCluster = c.getLong(13);
+                int restoreStatus = c.getInt(14);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -338,6 +412,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 entry.setUnreadableReason(unreadableReason);
+                entry.setRestoreStatus(restoreStatus);
                 list.add(entry);
             }
             c.close();
@@ -427,7 +502,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public synchronized List<RecoveredEntry> getAllEntriesForSaveAll() {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + " FROM " + TABLE_NODES + " ORDER BY " + COL_IS_DIR + " DESC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -444,6 +519,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 boolean isUnreadable = c.getInt(11) == 1;
                 String unreadableReason = c.getString(12);
                 long firstCluster = c.getLong(13);
+                int restoreStatus = c.getInt(14);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -454,6 +530,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 entry.setUnreadableReason(unreadableReason);
+                entry.setRestoreStatus(restoreStatus);
                 list.add(entry);
             }
             c.close();
@@ -465,7 +542,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=1") : (COL_IS_DIR + "=1 AND " + COL_SELECTED + "!=0");
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY LENGTH(" + COL_PATH + ") ASC, " + COL_PARENT_ID + " ASC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY LENGTH(" + COL_PATH + ") ASC, " + COL_PARENT_ID + " ASC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -482,6 +559,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 boolean isUnreadable = c.getInt(11) == 1;
                 String unreadableReason = c.getString(12);
                 long firstCluster = c.getLong(13);
+                int restoreStatus = c.getInt(14);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -492,6 +570,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 entry.setUnreadableReason(unreadableReason);
+                entry.setRestoreStatus(restoreStatus);
                 list.add(entry);
             }
             c.close();
@@ -503,7 +582,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String selectionClause = saveAll ? (COL_IS_DIR + "=0") : (COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1");
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY " + COL_PATH + " ASC", null);
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + " FROM " + TABLE_NODES + " WHERE " + selectionClause + " ORDER BY " + COL_PATH + " ASC", null);
         if (c != null) {
             while (c.moveToNext()) {
                 long id = c.getLong(0);
@@ -520,6 +599,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 boolean isUnreadable = c.getInt(11) == 1;
                 String unreadableReason = c.getString(12);
                 long firstCluster = c.getLong(13);
+                int restoreStatus = c.getInt(14);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -530,6 +610,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 entry.setUnreadableReason(unreadableReason);
+                entry.setRestoreStatus(restoreStatus);
                 list.add(entry);
             }
             c.close();

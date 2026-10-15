@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.hardware.usb.UsbDevice;
@@ -15,6 +16,7 @@ import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.View;
@@ -35,6 +37,7 @@ public class MainActivity extends Activity {
 
     private static final int REQUEST_CODE_OPEN_DOCUMENT = 1001;
     private static final int REQUEST_CODE_POST_NOTIFICATIONS = 1002;
+    private static final String PREF_BATTERY_DIALOG_SHOWN = "pref_battery_dialog_shown";
 
     private TextView tvFileName;
     private TextView tvFileSize;
@@ -93,6 +96,13 @@ public class MainActivity extends Activity {
         if (ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
             startActivity(new Intent(this, ScanActivity.class));
             finish();
+            return;
+        }
+
+        // Check for unfinished restore queue in DB
+        DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
+        if (dbHelper.hasUnfinishedRestore()) {
+            showUnfinishedRestoreDialog();
             return;
         }
 
@@ -228,7 +238,7 @@ public class MainActivity extends Activity {
 
         TextView tvVersion = new TextView(this);
         String buildDateTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date());
-        tvVersion.setText("v0.5 build " + buildDateTime);
+        tvVersion.setText("v0.6 build " + buildDateTime);
         tvVersion.setTextSize(11);
         tvVersion.setTextColor(0xFF888888);
         FrameLayout.LayoutParams versionParams = new FrameLayout.LayoutParams(
@@ -271,20 +281,127 @@ public class MainActivity extends Activity {
         btnStartScan.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (currentUri != null) {
-                    Intent intent = new Intent(MainActivity.this, ScanActivity.class);
-                    intent.putExtra(ScanActivity.EXTRA_URI, currentUri);
-                    startActivity(intent);
-                } else if (currentUsbDevice != null) {
-                    Intent intent = new Intent(MainActivity.this, ScanActivity.class);
-                    intent.putExtra(ScanActivity.EXTRA_USB_DEVICE_NAME, currentUsbDevice.getDeviceName());
-                    startActivity(intent);
-                }
+                checkAndShowBatteryOptimizationDialog(new Runnable() {
+                    @Override
+                    public void run() {
+                        proceedWithScan();
+                    }
+                });
             }
         });
 
         setContentView(rootContainer);
         handleIntent(getIntent());
+    }
+
+    private void showUnfinishedRestoreDialog() {
+        DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
+        int[] stats = dbHelper.getRestoreQueueStats();
+        int done = stats[0];
+        int total = stats[1];
+
+        new AlertDialog.Builder(this)
+                .setTitle("שחזור לא הושלם")
+                .setMessage("נמצא שחזור קודם שלא הושלם: " + done + " מתוך " + total + " קבצים בוצעו.")
+                .setPositiveButton("Resume", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        checkAndShowBatteryOptimizationDialog(new Runnable() {
+                            @Override
+                            public void run() {
+                                SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+                                String destUriStr = prefs.getString(PREF_DEST_URI, null);
+                                if (destUriStr != null) {
+                                    Uri treeUri = Uri.parse(destUriStr);
+                                    Intent intent = new Intent(MainActivity.this, RestoreService.class);
+                                    intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
+                                    intent.putExtra(RestoreService.EXTRA_RESUME, true);
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        startForegroundService(intent);
+                                    } else {
+                                        startService(intent);
+                                    }
+                                    startActivity(new Intent(MainActivity.this, ScanActivity.class));
+                                    finish();
+                                } else {
+                                    Toast.makeText(MainActivity.this, "לא נמצאה תיקיית יעד לשחזור", Toast.LENGTH_SHORT).show();
+                                    dbHelper.clearRestoreQueue();
+                                    recreate();
+                                }
+                            }
+                        });
+                    }
+                })
+                .setNegativeButton("Discard", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        DatabaseHelper.getInstance(MainActivity.this).clearRestoreQueue();
+                        recreate();
+                    }
+                })
+                .setCancelable(false)
+                .show();
+    }
+
+    private void checkAndShowBatteryOptimizationDialog(final Runnable onProceed) {
+        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+        boolean shown = prefs.getBoolean(PREF_BATTERY_DIALOG_SHOWN, false);
+
+        boolean isExempt = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null) {
+                isExempt = pm.isIgnoringBatteryOptimizations(getPackageName());
+            }
+        }
+
+        if (!shown && !isExempt) {
+            prefs.edit().putBoolean(PREF_BATTERY_DIALOG_SHOWN, true).apply();
+
+            new AlertDialog.Builder(this)
+                    .setTitle("פעולה ברקע ובמצב שינה")
+                    .setMessage("תהליך הסריקה והשחזור עשוי לקחת זמן רב ועליו להמשיך ברקע גם כאשר המסך כבוי.\n\nהאם ברצונך לפתוח את הגדרות הסוללה כדי לאפשר פעולה רציפה ברקע?")
+                    .setPositiveButton("הגדרות סוללה", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                try {
+                                    Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                                    intent.setData(Uri.parse("package:" + getPackageName()));
+                                    startActivity(intent);
+                                } catch (Exception e) {
+                                    try {
+                                        Intent intent = new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                                        startActivity(intent);
+                                    } catch (Exception ignored2) {}
+                                }
+                            }
+                            onProceed.run();
+                        }
+                    })
+                    .setNegativeButton("Not now", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            onProceed.run();
+                        }
+                    })
+                    .setCancelable(false)
+                    .show();
+        } else {
+            onProceed.run();
+        }
+    }
+
+    private void proceedWithScan() {
+        if (currentUri != null) {
+            Intent intent = new Intent(MainActivity.this, ScanActivity.class);
+            intent.putExtra(ScanActivity.EXTRA_URI, currentUri);
+            startActivity(intent);
+        } else if (currentUsbDevice != null) {
+            Intent intent = new Intent(MainActivity.this, ScanActivity.class);
+            intent.putExtra(ScanActivity.EXTRA_USB_DEVICE_NAME, currentUsbDevice.getDeviceName());
+            startActivity(intent);
+        }
     }
 
     @Override

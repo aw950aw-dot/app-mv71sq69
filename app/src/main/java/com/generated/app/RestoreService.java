@@ -30,6 +30,7 @@ public class RestoreService extends Service {
     public static final String EXTRA_SAVE_ALL = "extra_save_all";
     public static final String EXTRA_URI = "extra_uri";
     public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
+    public static final String EXTRA_RESUME = "extra_resume";
 
     public static final String ACTION_PROGRESS = "com.generated.app.RESTORE_PROGRESS";
     public static final String ACTION_COMPLETED = "com.generated.app.RESTORE_COMPLETED";
@@ -107,21 +108,27 @@ public class RestoreService extends Service {
 
             Uri treeUri = intent.getParcelableExtra(EXTRA_TREE_URI);
             boolean saveAll = intent.getBooleanExtra(EXTRA_SAVE_ALL, true);
+            boolean isResume = intent.getBooleanExtra(EXTRA_RESUME, false);
             Uri sourceUri = intent.getParcelableExtra(EXTRA_URI);
             String usbDeviceName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
 
             if (treeUri != null && !isRestoreRunning) {
                 isRestoreRunning = true;
-                restoredFilesCount = 0;
-                failedFilesCount = 0;
-                skippedExistingFilesCount = 0;
-                foldersCreatedCount = 0;
-                foldersReusedCount = 0;
-                currentBytesRestored = 0;
-                currentPercent = 0;
-                failureCausesMap.clear();
+                if (!isResume) {
+                    restoredFilesCount = 0;
+                    failedFilesCount = 0;
+                    skippedExistingFilesCount = 0;
+                    foldersCreatedCount = 0;
+                    foldersReusedCount = 0;
+                    currentBytesRestored = 0;
+                    currentPercent = 0;
+                    failureCausesMap.clear();
+                    dbHelper.clearRestoreQueue();
+                } else {
+                    int[] stats = dbHelper.getRestoreQueueStats();
+                    restoredFilesCount = stats[0];
+                }
 
-                // Ensure wakeLock is acquired for restore duration
                 if (wakeLock != null && !wakeLock.isHeld()) {
                     wakeLock.acquire(4 * 60 * 60 * 1000L);
                 }
@@ -163,7 +170,7 @@ public class RestoreService extends Service {
                     return START_NOT_STICKY;
                 }
 
-                startRestoreThread(treeUri, saveAll);
+                startRestoreThread(treeUri, saveAll, isResume);
             }
         }
         return START_NOT_STICKY;
@@ -219,7 +226,7 @@ public class RestoreService extends Service {
         return builder.build();
     }
 
-    private void startRestoreThread(final Uri treeUri, final boolean saveAll) {
+    private void startRestoreThread(final Uri treeUri, final boolean saveAll, final boolean isResume) {
         restoreThread = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -376,14 +383,29 @@ public class RestoreService extends Service {
                     }
 
                     if (shouldRestore) {
+                        // If resuming, skip files that already have restoreStatus == 1 (done)
+                        if (isResume && fileEntry.getRestoreStatus() == 1) {
+                            continue;
+                        }
                         filesToRestore.add(fileEntry);
                     }
                 }
 
-                totalFilesCount = filesToRestore.size();
+                totalFilesCount = allFiles.size();
                 totalBytesCount = 0;
-                for (RecoveredEntry e : filesToRestore) {
-                    totalBytesCount += e.getLength();
+                for (RecoveredEntry e : allFiles) {
+                    if (saveAll || e.isSelected() || allowedNodeIds.contains(e.getParentId())) {
+                        totalBytesCount += e.getLength();
+                    }
+                }
+
+                if (isResume) {
+                    currentBytesRestored = 0;
+                    for (RecoveredEntry e : allFiles) {
+                        if (e.getRestoreStatus() == 1) {
+                            currentBytesRestored += e.getLength();
+                        }
+                    }
                 }
 
                 long startTime = System.currentTimeMillis();
@@ -422,8 +444,10 @@ public class RestoreService extends Service {
                             currentBytesRestored += entry.getLength();
                             bytesSinceLastHistory += entry.getLength();
                         }
+                        dbHelper.updateRestoreStatus(entry.getId(), 1); // Mark as done
                     } catch (Exception e) {
                         failedFilesCount++;
+                        dbHelper.updateRestoreStatus(entry.getId(), 2); // Mark as failed
                         String errInfo = "נכשל " + entry.getName() + " (Offset: 0x" + Long.toHexString(entry.getOffset()) + "): " + e.getMessage();
                         errorLogs.add(errInfo);
                         recordFailureCause(e.getMessage());
@@ -433,7 +457,7 @@ public class RestoreService extends Service {
                     if (totalBytesCount > 0) {
                         currentPercent = (int) Math.min(100, (currentBytesRestored * 100) / totalBytesCount);
                     } else {
-                        currentPercent = (int) (((i + 1) * 100) / Math.max(1, totalFilesCount));
+                        currentPercent = (int) (((i + 1) * 100) / Math.max(1, filesToRestore.size()));
                     }
 
                     long now = System.currentTimeMillis();
@@ -466,6 +490,10 @@ public class RestoreService extends Service {
                         updateNotification(currentFileName, currentPercent, currentEtaText);
                         broadcastProgress();
                     }
+                }
+
+                if (!isCancelled) {
+                    dbHelper.clearRestoreQueue();
                 }
 
                 finishRestore(restoredFilesCount, failedFilesCount, skippedExistingFilesCount, errorLogs);
@@ -616,7 +644,6 @@ public class RestoreService extends Service {
             byteSource = null;
         }
 
-        // Release wakeLock when restore completes
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
                 wakeLock.release();
