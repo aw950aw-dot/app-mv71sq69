@@ -14,7 +14,7 @@ import java.util.Map;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 11; // Upgraded for category index and backfill
+    private static final int DATABASE_VERSION = 11;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -31,7 +31,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_UNREADABLE = "unreadable";
     public static final String COL_UNREADABLE_REASON = "unreadable_reason";
     public static final String COL_FIRST_CLUSTER = "first_cluster";
-    public static final String COL_RESTORE_STATUS = "restore_status"; // 0=pending, 1=done, 2=failed
+    public static final String COL_RESTORE_STATUS = "restore_status";
     public static final String COL_CATEGORY = "category";
 
     private static final String TABLE_META = "metadata";
@@ -113,7 +113,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 }
                 db.execSQL("CREATE INDEX IF NOT EXISTS idx_category ON " + TABLE_NODES + "(" + COL_CATEGORY + ")");
 
-                // Fill category with one UPDATE for saved scans from before this change
                 db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_CATEGORY + " = CASE " +
                         "WHEN " + COL_IS_DIR + " = 1 THEN NULL " +
                         "WHEN " + COL_NAME + " LIKE '%.jpg' OR " + COL_NAME + " LIKE '%.jpeg' OR " + COL_NAME + " LIKE '%.png' OR " + COL_NAME + " LIKE '%.gif' OR " + COL_NAME + " LIKE '%.webp' OR " + COL_NAME + " LIKE '%.heic' OR " + COL_NAME + " LIKE '%.bmp' OR " + COL_NAME + " LIKE '%.dng' THEN 'PHOTOS' " +
@@ -365,32 +364,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return count;
     }
 
-    public synchronized int getChildrenFoldersCountForNode(long nodeId) {
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? AND " + COL_IS_DIR + "=1", new String[]{String.valueOf(nodeId)});
-        int count = 0;
-        if (c != null) {
-            if (c.moveToFirst()) {
-                count = c.getInt(0);
-            }
-            c.close();
-        }
-        return count;
-    }
-
-    public synchronized int getChildrenFilesCountForNode(long nodeId) {
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? AND " + COL_IS_DIR + "=0", new String[]{String.valueOf(nodeId)});
-        int count = 0;
-        if (c != null) {
-            if (c.moveToFirst()) {
-                count = c.getInt(0);
-            }
-            c.close();
-        }
-        return count;
-    }
-
     public synchronized int getOrphansCount() {
         SQLiteDatabase db = getReadableDatabase();
         Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " c WHERE c." + COL_PARENT_ID + " != 0 AND c." + COL_PARENT_ID + " NOT IN (SELECT " + COL_ID + " FROM " + TABLE_NODES + ")", null);
@@ -508,6 +481,18 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         int st = selected ? 1 : 0;
         try {
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=?", new Object[]{st});
+        } catch (Exception ignored) {}
+    }
+
+    public synchronized void setCategorySelected(String categoryKey, boolean selected) {
+        SQLiteDatabase db = getWritableDatabase();
+        int st = selected ? 1 : 0;
+        try {
+            if (categoryKey != null) {
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_CATEGORY + "=?", new Object[]{st, categoryKey});
+            } else {
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=?", new Object[]{st});
+            }
         } catch (Exception ignored) {}
     }
 

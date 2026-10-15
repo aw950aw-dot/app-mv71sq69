@@ -9,6 +9,7 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.hardware.usb.UsbDevice;
@@ -16,13 +17,13 @@ import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
-import android.provider.OpenableColumns;
+import android.os.StrictMode;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
-import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -31,10 +32,8 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -56,6 +55,8 @@ public class MainActivity extends Activity {
     private ByteSource currentByteSource;
     private Uri currentUri;
     private UsbDevice currentUsbDevice;
+
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private final BroadcastReceiver detachReceiver = new BroadcastReceiver() {
         @Override
@@ -100,6 +101,15 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        boolean isDebug = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (isDebug) {
+            StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
+                    .detectDiskReads()
+                    .detectDiskWrites()
+                    .penaltyLog()
+                    .build());
+        }
         
         if (ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
             startActivity(new Intent(this, ScanActivity.class));
@@ -107,11 +117,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
-        if (dbHelper.hasUnfinishedRestore()) {
-            showUnfinishedRestoreDialog();
-            return;
-        }
+        checkSavedScanStateOffMainThread();
 
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
@@ -145,7 +151,6 @@ public class MainActivity extends Activity {
 
         int padding = (int) (16 * getResources().getDisplayMetrics().density);
 
-        // Top App Bar
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -164,7 +169,6 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
         topBar.addView(tvTitle, titleLp);
 
-        // Help Icon (Emergency Guide)
         Button btnHelp = new Button(this);
         btnHelp.setText("❓");
         btnHelp.setTextSize(16);
@@ -181,7 +185,6 @@ public class MainActivity extends Activity {
                 (int)(48 * getResources().getDisplayMetrics().density)
         ));
 
-        // Settings Icon
         Button btnSettings = new Button(this);
         btnSettings.setText("⚙️");
         btnSettings.setTextSize(16);
@@ -198,7 +201,6 @@ public class MainActivity extends Activity {
                 (int)(48 * getResources().getDisplayMetrics().density)
         ));
 
-        // Content Scroll Area
         android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
         rootLayout.addView(scrollView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -214,7 +216,6 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        // Main Status Card (16dp rounded corners, 16dp spacing, white card)
         cardStatusContainer = new LinearLayout(this);
         cardStatusContainer.setOrientation(LinearLayout.VERTICAL);
         cardStatusContainer.setPadding(padding, padding, padding, padding);
@@ -248,7 +249,6 @@ public class MainActivity extends Activity {
         subParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         cardStatusContainer.addView(tvStatusSubtitle, subParams);
 
-        // Primary Button Style (Blue background, white text, 16dp padding)
         btnScanCard = new Button(this);
         btnScanCard.setText(R.string.scan_card_button);
         btnScanCard.setTextColor(0xFFFFFFFF);
@@ -273,7 +273,6 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Previous Scan Card
         cardPreviousScanContainer = new LinearLayout(this);
         cardPreviousScanContainer.setOrientation(LinearLayout.VERTICAL);
         cardPreviousScanContainer.setPadding(padding, padding, padding, padding);
@@ -349,35 +348,50 @@ public class MainActivity extends Activity {
         btnScanAgain.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                DatabaseHelper.getInstance(MainActivity.this).clearDatabase();
-                SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-                prefs.edit().putBoolean(PREF_HAS_SAVED_SCAN, false).apply();
-                cardPreviousScanContainer.setVisibility(View.GONE);
-                Toast.makeText(MainActivity.this, "הנתונים הקודמים נוקו, מוכן לסריקה חדשה", Toast.LENGTH_SHORT).show();
+                new Thread(() -> {
+                    DatabaseHelper.getInstance(MainActivity.this).clearDatabase();
+                    SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+                    prefs.edit().putBoolean(PREF_HAS_SAVED_SCAN, false).apply();
+                    mainHandler.post(() -> {
+                        cardPreviousScanContainer.setVisibility(View.GONE);
+                        Toast.makeText(MainActivity.this, "הנתונים הקודמים נוקו, מוכן לסריקה חדשה", Toast.LENGTH_SHORT).show();
+                    });
+                }).start();
             }
         });
 
         setContentView(rootLayout);
         checkForConnectedUsbDevice();
-        checkSavedScanState(tvPrevDetails);
     }
 
-    private void checkSavedScanState(TextView tvDetails) {
-        DatabaseHelper db = DatabaseHelper.getInstance(this);
-        int totalFiles = db.getTotalFilesCount();
-        int totalFolders = db.getTotalFoldersCount();
-        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-        boolean hasSaved = prefs.getBoolean(PREF_HAS_SAVED_SCAN, false) || (totalFiles > 0 || totalFolders > 0);
+    private void checkSavedScanStateOffMainThread() {
+        new Thread(() -> {
+            DatabaseHelper db = DatabaseHelper.getInstance(this);
+            int totalFiles = db.getTotalFilesCount();
+            int totalFolders = db.getTotalFoldersCount();
+            SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+            boolean hasSaved = prefs.getBoolean(PREF_HAS_SAVED_SCAN, false) || (totalFiles > 0 || totalFolders > 0);
 
-        if (hasSaved) {
-            String dateStr = prefs.getString(PREF_LAST_SCAN_DATE, "תאריך לא ידוע");
-            String filesPlural = getResources().getQuantityString(R.plurals.files_count, totalFiles, totalFiles);
-            String foldersPlural = getResources().getQuantityString(R.plurals.folders_count, totalFolders, totalFolders);
-            tvDetails.setText(String.format(Locale.getDefault(), "תאריך: %s\nמצא: %s, %s", dateStr, filesPlural, foldersPlural));
-            cardPreviousScanContainer.setVisibility(View.VISIBLE);
-        } else {
-            cardPreviousScanContainer.setVisibility(View.GONE);
-        }
+            if (hasSaved) {
+                String dateStr = prefs.getString(PREF_LAST_SCAN_DATE, "תאריך לא ידוע");
+                String filesPlural = getResources().getQuantityString(R.plurals.files_count, totalFiles, totalFiles);
+                String foldersPlural = getResources().getQuantityString(R.plurals.folders_count, totalFolders, totalFolders);
+                final String detailsText = String.format(Locale.getDefault(), "תאריך: %s\nמצא: %s, %s", dateStr, filesPlural, foldersPlural);
+                mainHandler.post(() -> {
+                    if (cardPreviousScanContainer != null) {
+                        // Find TextView inside cardPreviousScanContainer if needed, or update text directly
+                        for (int i = 0; i < cardPreviousScanContainer.getChildCount(); i++) {
+                            View child = cardPreviousScanContainer.getChildAt(i);
+                            if (child instanceof TextView && child != cardPreviousScanContainer.getChildAt(0)) {
+                                ((TextView) child).setText(detailsText);
+                                break;
+                            }
+                        }
+                        cardPreviousScanContainer.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+        }).start();
     }
 
     private void checkForConnectedUsbDevice() {
@@ -385,7 +399,7 @@ public class MainActivity extends Activity {
         HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
         for (UsbDevice device : deviceList.values()) {
             loadUsbDevice(device);
-            break; // Pick first detected
+            break;
         }
     }
 
@@ -434,52 +448,55 @@ public class MainActivity extends Activity {
     }
 
     private void showUnfinishedRestoreDialog() {
-        DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
-        int[] stats = dbHelper.getRestoreQueueStats();
-        int done = stats[0];
-        int total = stats[1];
-
-        new AlertDialog.Builder(this)
-                .setTitle("שחזור לא הושלם")
-                .setMessage("נמצא שחזור קודם שלא הושלם: " + done + " מתוך " + total + " קבצים בוצעו.")
-                .setPositiveButton("Resume", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        checkAndShowBatteryOptimizationDialog(new Runnable() {
+        new Thread(() -> {
+            DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
+            int[] stats = dbHelper.getRestoreQueueStats();
+            int done = stats[0];
+            int total = stats[1];
+            mainHandler.post(() -> {
+                new AlertDialog.Builder(this)
+                        .setTitle("שחזור לא הושלם")
+                        .setMessage("נמצא שחזור קודם שלא הושלם: " + done + " מתוך " + total + " קבצים בוצעו.")
+                        .setPositiveButton("Resume", new DialogInterface.OnClickListener() {
                             @Override
-                            public void run() {
-                                SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-                                String destUriStr = prefs.getString(PREF_DEST_URI, null);
-                                if (destUriStr != null) {
-                                    Uri treeUri = Uri.parse(destUriStr);
-                                    Intent intent = new Intent(MainActivity.this, RestoreService.class);
-                                    intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
-                                    intent.putExtra(RestoreService.EXTRA_RESUME, true);
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                        startForegroundService(intent);
-                                    } else {
-                                        startService(intent);
+                            public void onClick(DialogInterface dialog, int which) {
+                                checkAndShowBatteryOptimizationDialog(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
+                                        String destUriStr = prefs.getString(PREF_DEST_URI, null);
+                                        if (destUriStr != null) {
+                                            Uri treeUri = Uri.parse(destUriStr);
+                                            Intent intent = new Intent(MainActivity.this, RestoreService.class);
+                                            intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
+                                            intent.putExtra(RestoreService.EXTRA_RESUME, true);
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                                startForegroundService(intent);
+                                            } else {
+                                                startService(intent);
+                                            }
+                                            startActivity(new Intent(MainActivity.this, ScanActivity.class));
+                                            finish();
+                                        } else {
+                                            Toast.makeText(MainActivity.this, "לא נמצאה תיקיית יעד לשחזור", Toast.LENGTH_SHORT).show();
+                                            new Thread(() -> dbHelper.clearRestoreQueue()).start();
+                                            recreate();
+                                        }
                                     }
-                                    startActivity(new Intent(MainActivity.this, ScanActivity.class));
-                                    finish();
-                                } else {
-                                    Toast.makeText(MainActivity.this, "לא נמצאה תיקיית יעד לשחזור", Toast.LENGTH_SHORT).show();
-                                    dbHelper.clearRestoreQueue();
-                                    recreate();
-                                }
+                                });
                             }
-                        });
-                    }
-                })
-                .setNegativeButton("Discard", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        DatabaseHelper.getInstance(MainActivity.this).clearRestoreQueue();
-                        recreate();
-                    }
-                })
-                .setCancelable(false)
-                .show();
+                        })
+                        .setNegativeButton("Discard", new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                new Thread(() -> DatabaseHelper.getInstance(MainActivity.this).clearRestoreQueue()).start();
+                                recreate();
+                            }
+                        })
+                        .setCancelable(false)
+                        .show();
+            });
+        }).start();
     }
 
     private void checkAndShowBatteryOptimizationDialog(final Runnable onProceed) {
@@ -630,6 +647,13 @@ public class MainActivity extends Activity {
             registerReceiver(detachReceiver, filter);
         }
         checkForConnectedUsbDevice();
+
+        new Thread(() -> {
+            DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
+            if (dbHelper.hasUnfinishedRestore()) {
+                mainHandler.post(this::showUnfinishedRestoreDialog);
+            }
+        }).start();
     }
 
     @Override
