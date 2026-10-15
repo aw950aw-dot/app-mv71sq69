@@ -23,7 +23,6 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.MimeTypeMap;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -41,7 +40,6 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -56,7 +54,6 @@ public class ScanActivity extends Activity {
 
     private Uri sourceUri;
     private String usbDeviceName;
-    private ByteSource byteSource;
     private DatabaseHelper dbHelper;
 
     // Views for Mode 1: Scanning screen
@@ -128,7 +125,6 @@ public class ScanActivity extends Activity {
                 } else if (ScanService.ACTION_COMPLETED.equals(action)) {
                     int count = intent.getIntExtra("count", 0);
                     updateScanCountersAndStatus(count, lastBroadcastFolders, "הסריקה הסתיימה");
-                    // Automatically transition to Results Dashboard when scan completes
                     switchUiMode(2);
                 }
             } catch (Exception ignored) {}
@@ -165,57 +161,58 @@ public class ScanActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
-        dbHelper = DatabaseHelper.getInstance(this);
-        currentParentId = dbHelper.getRootId();
-        sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
-        usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
-
-        if (sourceUri == null && usbDeviceName == null) {
-            Toast.makeText(this, R.string.error_opening_file, Toast.LENGTH_SHORT).show();
-            finish();
-            return;
-        }
-
         try {
-            if (sourceUri != null) {
-                byteSource = new FileImageSource(getContentResolver(), sourceUri);
-            } else {
-                android.hardware.usb.UsbManager usbManager = (android.hardware.usb.UsbManager) getSystemService(Context.USB_SERVICE);
-                android.hardware.usb.UsbDevice target = null;
-                for (android.hardware.usb.UsbDevice d : usbManager.getDeviceList().values()) {
-                    if (d.getDeviceName().equals(usbDeviceName)) {
-                        target = d;
-                        break;
-                    }
-                }
-                if (target != null) {
-                    byteSource = new UsbMassStorageSource(this, target);
-                }
-            }
-        } catch (Exception ignored) {}
+            dbHelper = DatabaseHelper.getInstance(this);
+            currentParentId = dbHelper.getRootId();
+            sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
+            usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
 
-        scanStartTime = System.currentTimeMillis();
-        buildAllUiScreens();
+            scanStartTime = System.currentTimeMillis();
+            buildAllUiScreens();
 
-        if (RestoreService.isRestoreRunning()) {
-            switchUiMode(1);
-            tvScanStatus.setText("משחזר קבצים... (" + RestoreService.getCurrentPercent() + "%)");
-        } else if (ScanService.isScanRunning()) {
-            switchUiMode(1);
-            lastBroadcastFiles = ScanService.getFilesCount();
-            lastBroadcastFolders = ScanService.getFoldersCount();
-            updateScanCountersAndStatus(lastBroadcastFiles, lastBroadcastFolders, ScanService.getCurrentFolderPath());
-        } else {
-            int totalFiles = dbHelper.getTotalFilesCount();
-            int totalFolders = dbHelper.getTotalFoldersCount();
-            if (totalFiles > 0 || totalFolders > 0) {
-                // Already have results from previous scan
-                switchUiMode(2);
-            } else {
+            if (RestoreService.isRestoreRunning()) {
                 switchUiMode(1);
-                startScanService();
+                tvScanStatus.setText("משחזר קבצים... (" + RestoreService.getCurrentPercent() + "%)");
+            } else if (ScanService.isScanRunning()) {
+                switchUiMode(1);
+                lastBroadcastFiles = ScanService.getFilesCount();
+                lastBroadcastFolders = ScanService.getFoldersCount();
+                updateScanCountersAndStatus(lastBroadcastFiles, lastBroadcastFolders, ScanService.getCurrentFolderPath());
+            } else {
+                int totalFiles = dbHelper.getTotalFilesCount();
+                int totalFolders = dbHelper.getTotalFoldersCount();
+                if (totalFiles > 0 || totalFolders > 0) {
+                    switchUiMode(2);
+                } else {
+                    switchUiMode(1);
+                    tvScanStatus.setText("מתחבר לסריקה...");
+                    startScanService();
+                }
             }
+        } catch (Throwable t) {
+            showExceptionDialog(t);
         }
+    }
+
+    private void showExceptionDialog(Throwable t) {
+        StringWriter sw = new StringWriter();
+        t.printStackTrace(new PrintWriter(sw));
+        TextView tv = new TextView(this);
+        tv.setText(sw.toString());
+        tv.setTextSize(12);
+        tv.setTextColor(0xFF333333);
+        tv.setTextIsSelectable(true);
+        int pad = (int) (12 * getResources().getDisplayMetrics().density);
+        tv.setPadding(pad, pad, pad, pad);
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(tv);
+
+        new AlertDialog.Builder(this)
+                .setTitle("שגיאה באתחול המסך")
+                .setView(sv)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> finish())
+                .show();
     }
 
     private void buildAllUiScreens() {
@@ -234,7 +231,6 @@ public class ScanActivity extends Activity {
         root.addView(layoutScanScreen, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
 
-        // Scanning UI components
         TextView tvScanHeader = new TextView(this);
         tvScanHeader.setText("סריקת כרטיס זיכרון");
         tvScanHeader.setTextSize(22);
@@ -253,7 +249,7 @@ public class ScanActivity extends Activity {
         layoutScanScreen.addView(scanCircularProgress, pbLp);
 
         tvScanStatus = new TextView(this);
-        tvScanStatus.setText(R.string.scanning_title);
+        tvScanStatus.setText("מתחבר לסריקה...");
         tvScanStatus.setTextSize(18);
         tvScanStatus.setTextColor(0xFF333333);
         tvScanStatus.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -284,23 +280,19 @@ public class ScanActivity extends Activity {
         cancelLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         layoutScanScreen.addView(btnCancelScan, cancelLp);
 
-        btnCancelScan.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (RestoreService.isRestoreRunning()) {
-                    Intent intent = new Intent(ScanActivity.this, RestoreService.class);
-                    intent.setAction(RestoreService.ACTION_CANCEL);
-                    startService(intent);
-                } else {
-                    Intent intent = new Intent(ScanActivity.this, ScanService.class);
-                    intent.setAction(ScanService.ACTION_CANCEL);
-                    startService(intent);
-                    finish();
-                }
+        btnCancelScan.setOnClickListener(v -> {
+            if (RestoreService.isRestoreRunning()) {
+                Intent intent = new Intent(ScanActivity.this, RestoreService.class);
+                intent.setAction(RestoreService.ACTION_CANCEL);
+                startService(intent);
+            } else {
+                Intent intent = new Intent(ScanActivity.this, ScanService.class);
+                intent.setAction(ScanService.ACTION_CANCEL);
+                startService(intent);
+                finish();
             }
         });
 
-        // Expandable Technical Details section
         btnToggleTechDetails = new Button(this);
         btnToggleTechDetails.setText("פרטים טכניים ▼");
         btnToggleTechDetails.setTextSize(13);
@@ -352,45 +344,35 @@ public class ScanActivity extends Activity {
         btnSaveReportScan.setBackgroundColor(0xFF00838F);
         techBtnRow.addView(btnSaveReportScan, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-        btnToggleTechDetails.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                boolean isVis = layoutTechDetailsContainer.getVisibility() == View.VISIBLE;
-                layoutTechDetailsContainer.setVisibility(isVis ? View.GONE : View.VISIBLE);
-                btnToggleTechDetails.setText(isVis ? "פרטים טכניים ▼" : "פרטים טכניים ▲");
-                if (!isVis) {
-                    tvTechDetailsContent.setText(DiagnosticReporter.generateFullReport(ScanActivity.this));
+        btnToggleTechDetails.setOnClickListener(v -> {
+            boolean isVis = layoutTechDetailsContainer.getVisibility() == View.VISIBLE;
+            layoutTechDetailsContainer.setVisibility(isVis ? View.GONE : View.VISIBLE);
+            btnToggleTechDetails.setText(isVis ? "פרטים טכניים ▼" : "פרטים טכניים ▲");
+            if (!isVis) {
+                tvTechDetailsContent.setText(DiagnosticReporter.generateFullReport(ScanActivity.this));
+            }
+        });
+
+        btnCopyReportScan.setOnClickListener(v -> {
+            try {
+                String report = DiagnosticReporter.generateFullReport(ScanActivity.this);
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Scan Report", report));
+                    Toast.makeText(ScanActivity.this, "הדוח הועתק ללוח", Toast.LENGTH_SHORT).show();
                 }
-            }
+            } catch (Exception ignored) {}
         });
 
-        btnCopyReportScan.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                try {
-                    String report = DiagnosticReporter.generateFullReport(ScanActivity.this);
-                    ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (clipboard != null) {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Scan Report", report));
-                        Toast.makeText(ScanActivity.this, "הדוח הועתק ללוח", Toast.LENGTH_SHORT).show();
-                    }
-                } catch (Exception ignored) {}
-            }
+        btnSaveReportScan.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("text/plain");
+            intent.putExtra(Intent.EXTRA_TITLE, "sd_rescue_report.txt");
+            try {
+                startActivityForResult(intent, REQUEST_CODE_SAVE_REPORT);
+            } catch (Exception ignored) {}
         });
-
-        btnSaveReportScan.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("text/plain");
-                intent.putExtra(Intent.EXTRA_TITLE, "sd_rescue_report.txt");
-                try {
-                    startActivityForResult(intent, REQUEST_CODE_SAVE_REPORT);
-                } catch (Exception ignored) {}
-            }
-        });
-
 
         // 2. RESULTS DASHBOARD CONTAINER
         layoutResultsDashboard = new LinearLayout(this);
@@ -401,7 +383,6 @@ public class ScanActivity extends Activity {
         layoutResultsDashboard.setVisibility(View.GONE);
         root.addView(layoutResultsDashboard);
 
-        // Results Top Bar
         topBarResults = new LinearLayout(this);
         topBarResults.setOrientation(LinearLayout.HORIZONTAL);
         topBarResults.setGravity(Gravity.CENTER_VERTICAL);
@@ -434,7 +415,6 @@ public class ScanActivity extends Activity {
                 (int)(48 * getResources().getDisplayMetrics().density),
                 (int)(48 * getResources().getDisplayMetrics().density)));
 
-        // Expandable search bar in dashboard
         etSearchDashboard = new EditText(this);
         etSearchDashboard.setHint("חיפוש קבצים לפי שם...");
         etSearchDashboard.setTextSize(14);
@@ -451,15 +431,11 @@ public class ScanActivity extends Activity {
             public void onTextChanged(CharSequence s, int start, int before, int count) {
                 if (searchRunnable != null) searchHandler.removeCallbacks(searchRunnable);
                 final String q = s.toString();
-                searchRunnable = new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!q.trim().isEmpty()) {
-                            // Switch to folder browser mode and execute search
-                            switchUiMode(3);
-                            etSearchBrowser.setText(q);
-                            performSearch(q);
-                        }
+                searchRunnable = () -> {
+                    if (!q.trim().isEmpty()) {
+                        switchUiMode(3);
+                        etSearchBrowser.setText(q);
+                        performSearch(q);
                     }
                 };
                 searchHandler.postDelayed(searchRunnable, 300);
@@ -468,21 +444,13 @@ public class ScanActivity extends Activity {
             public void afterTextChanged(Editable s) {}
         });
 
-        btnSearchToggle.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                boolean vis = etSearchDashboard.getVisibility() == View.VISIBLE;
-                etSearchDashboard.setVisibility(vis ? View.GONE : View.VISIBLE);
-                if (!vis) etSearchDashboard.requestFocus();
-            }
+        btnSearchToggle.setOnClickListener(v -> {
+            boolean vis = etSearchDashboard.getVisibility() == View.VISIBLE;
+            etSearchDashboard.setVisibility(vis ? View.GONE : View.VISIBLE);
+            if (!vis) etSearchDashboard.requestFocus();
         });
 
-        btnMenuResults.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showScanDetailsDialog();
-            }
-        });
+        btnMenuResults.setOnClickListener(v -> showScanDetailsDialog());
 
         dashboardScrollContainer = new ScrollView(this);
         layoutResultsDashboard.addView(dashboardScrollContainer, new LinearLayout.LayoutParams(
@@ -494,13 +462,11 @@ public class ScanActivity extends Activity {
         dashboardScrollContainer.addView(dashboardContent, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        // 2-Column Categories Grid container
         categoriesGridContainer = new LinearLayout(this);
         categoriesGridContainer.setOrientation(LinearLayout.VERTICAL);
         dashboardContent.addView(categoriesGridContainer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        // "עיון בכל התיקיות" wide card at bottom of dashboard
         cardBrowseFolders = new LinearLayout(this);
         cardBrowseFolders.setOrientation(LinearLayout.VERTICAL);
         cardBrowseFolders.setPadding(pad, pad, pad, pad);
@@ -526,16 +492,12 @@ public class ScanActivity extends Activity {
         tvBrowseSub.setTextColor(0xFF757575);
         cardBrowseFolders.addView(tvBrowseSub);
 
-        cardBrowseFolders.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                switchUiMode(3);
-                currentParentId = dbHelper.getRootId();
-                currentDirPath = "/";
-                reloadCurrentDirectoryFromDb();
-            }
+        cardBrowseFolders.setOnClickListener(v -> {
+            switchUiMode(3);
+            currentParentId = dbHelper.getRootId();
+            currentDirPath = "/";
+            reloadCurrentDirectoryFromDb();
         });
-
 
         // 3. FOLDER BROWSER CONTAINER
         layoutFolderBrowser = new LinearLayout(this);
@@ -570,12 +532,7 @@ public class ScanActivity extends Activity {
             public void onTextChanged(CharSequence s, int start, int before, int count) {
                 if (searchRunnable != null) searchHandler.removeCallbacks(searchRunnable);
                 final String q = s.toString();
-                searchRunnable = new Runnable() {
-                    @Override
-                    public void run() {
-                        performSearch(q);
-                    }
-                };
+                searchRunnable = () -> performSearch(q);
                 searchHandler.postDelayed(searchRunnable, 300);
             }
             @Override
@@ -620,25 +577,21 @@ public class ScanActivity extends Activity {
         browserAdapter = new TreeEntryAdapter();
         listViewBrowser.setAdapter(browserAdapter);
 
-        listViewBrowser.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
-            @Override
-            public void onItemClick(android.widget.AdapterView<?> parent, View view, int position, long id) {
-                if (position >= currentDirEntries.size()) return;
-                RecoveredEntry clicked = currentDirEntries.get(position);
-                if (clicked != null && clicked.isDirectory()) {
-                    isSearching = false;
-                    etSearchBrowser.setText("");
-                    currentParentId = clicked.getId();
-                    currentDirPath = currentDirPath.equals("/") ? "/" + clicked.getName() : currentDirPath + "/" + clicked.getName();
-                    updateBreadcrumbBar();
-                    reloadCurrentDirectoryFromDb();
-                } else if (clicked != null && !clicked.isDirectory()) {
-                    showRawBytesHexDialog(clicked);
-                }
+        listViewBrowser.setOnItemClickListener((parent, view, position, id) -> {
+            if (position >= currentDirEntries.size()) return;
+            RecoveredEntry clicked = currentDirEntries.get(position);
+            if (clicked != null && clicked.isDirectory()) {
+                isSearching = false;
+                etSearchBrowser.setText("");
+                currentParentId = clicked.getId();
+                currentDirPath = currentDirPath.equals("/") ? "/" + clicked.getName() : currentDirPath + "/" + clicked.getName();
+                updateBreadcrumbBar();
+                reloadCurrentDirectoryFromDb();
+            } else if (clicked != null && !clicked.isDirectory()) {
+                showRawBytesHexDialog(clicked);
             }
         });
 
-        // Bottom Bar for Restore selection (conditionally shown ONLY when items are selected)
         bottomBarRestore = new LinearLayout(this);
         bottomBarRestore.setOrientation(LinearLayout.HORIZONTAL);
         bottomBarRestore.setGravity(Gravity.CENTER_VERTICAL);
@@ -661,30 +614,21 @@ public class ScanActivity extends Activity {
         bottomBarRestore.addView(btnExecuteRestore, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        btnSelectAllBrowser.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                dbHelper.setAllSelected(true);
-                updateSelectionCounterAndBottomBar();
-                reloadCurrentDirectoryFromDb();
-            }
+        btnSelectAllBrowser.setOnClickListener(v -> {
+            dbHelper.setAllSelected(true);
+            updateSelectionCounterAndBottomBar();
+            reloadCurrentDirectoryFromDb();
         });
 
-        btnDeselectAllBrowser.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                dbHelper.setAllSelected(false);
-                updateSelectionCounterAndBottomBar();
-                reloadCurrentDirectoryFromDb();
-            }
+        btnDeselectAllBrowser.setOnClickListener(v -> {
+            dbHelper.setAllSelected(false);
+            updateSelectionCounterAndBottomBar();
+            reloadCurrentDirectoryFromDb();
         });
 
-        btnExecuteRestore.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                promptForSaveDirectory(false);
-            }
-        });
+        btnExecuteRestore.setOnClickListener(v -> promptForSaveDirectory(false));
+
+        setContentView(root);
     }
 
     private void switchUiMode(int mode) {
@@ -710,7 +654,6 @@ public class ScanActivity extends Activity {
         cats.add(new CatCardInfo(FileCategory.ARCHIVES_APPS, "ארכיונים ואפליקציות", "📦", statsMap));
         cats.add(new CatCardInfo(FileCategory.OTHER, "אחר (Other)", "📁", statsMap));
 
-        // Create 2-column layout by grouping items in rows of 2
         int pad = (int) (8 * getResources().getDisplayMetrics().density);
 
         for (int i = 0; i < cats.size(); i += 2) {
@@ -734,7 +677,6 @@ public class ScanActivity extends Activity {
                 cLp2.leftMargin = pad;
                 row.addView(card2, cLp2);
             } else {
-                // Empty spacer for odd item
                 View spacer = new View(this);
                 row.addView(spacer, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
             }
@@ -788,14 +730,11 @@ public class ScanActivity extends Activity {
         tvMeta.setTextColor(0xFF757575);
         card.addView(tvMeta);
 
-        card.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Intent intent = new Intent(ScanActivity.this, CategoryFilesActivity.class);
-                intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_KEY, cat.key);
-                intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_NAME, cat.name);
-                startActivity(intent);
-            }
+        card.setOnClickListener(v -> {
+            Intent intent = new Intent(ScanActivity.this, CategoryFilesActivity.class);
+            intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_KEY, cat.key);
+            intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_NAME, cat.name);
+            startActivity(intent);
         });
 
         return card;
@@ -820,60 +759,42 @@ public class ScanActivity extends Activity {
         }
 
         isSearching = true;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                final List<RecoveredEntry> results = dbHelper.searchNodes(query);
-                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                    @Override
-                    public void run() {
-                        searchResults = results;
-                        currentDirEntries = searchResults;
-                        browserAdapter.notifyDataSetChanged();
-                    }
-                });
-            }
+        new Thread(() -> {
+            final List<RecoveredEntry> results = dbHelper.searchNodes(query);
+            new Handler(Looper.getMainLooper()).post(() -> {
+                searchResults = results;
+                currentDirEntries = searchResults;
+                browserAdapter.notifyDataSetChanged();
+            });
         }).start();
     }
 
     private void updateSelectionCounterAndBottomBar() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                final long[] stats = dbHelper.getSelectedStats();
-                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                    @Override
-                    public void run() {
-                        long files = stats[0];
-                        long bytes = stats[1];
-                        if (files > 0) {
-                            bottomBarRestore.setVisibility(View.VISIBLE);
-                            tvRestoreSelectionInfo.setText(String.format(Locale.getDefault(), "%d פריטים · %s", files, formatSize(bytes)));
-                        } else {
-                            bottomBarRestore.setVisibility(View.GONE);
-                        }
-                    }
-                });
-            }
+        new Thread(() -> {
+            final long[] stats = dbHelper.getSelectedStats();
+            new Handler(Looper.getMainLooper()).post(() -> {
+                long files = stats[0];
+                long bytes = stats[1];
+                if (files > 0) {
+                    bottomBarRestore.setVisibility(View.VISIBLE);
+                    tvRestoreSelectionInfo.setText(String.format(Locale.getDefault(), "%d פריטים · %s", files, formatSize(bytes)));
+                } else {
+                    bottomBarRestore.setVisibility(View.GONE);
+                }
+            });
         }).start();
     }
 
     private void reloadCurrentDirectoryFromDb() {
         if (isSearching) return;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId);
-                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                    @Override
-                    public void run() {
-                        currentDirEntries = list;
-                        updateBreadcrumbBar();
-                        updateSelectionCounterAndBottomBar();
-                        browserAdapter.notifyDataSetChanged();
-                    }
-                });
-            }
+        new Thread(() -> {
+            final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId);
+            new Handler(Looper.getMainLooper()).post(() -> {
+                currentDirEntries = list;
+                updateBreadcrumbBar();
+                updateSelectionCounterAndBottomBar();
+                browserAdapter.notifyDataSetChanged();
+            });
         }).start();
     }
 
@@ -887,16 +808,13 @@ public class ScanActivity extends Activity {
         tvRoot.setTextColor(0xFF1976D2);
         tvRoot.setTypeface(null, android.graphics.Typeface.BOLD);
         tvRoot.setPadding(4, 4, 4, 4);
-        tvRoot.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                isSearching = false;
-                etSearchBrowser.setText("");
-                currentDirPath = "/";
-                currentParentId = dbHelper.getRootId();
-                updateBreadcrumbBar();
-                reloadCurrentDirectoryFromDb();
-            }
+        tvRoot.setOnClickListener(v -> {
+            isSearching = false;
+            etSearchBrowser.setText("");
+            currentDirPath = "/";
+            currentParentId = dbHelper.getRootId();
+            updateBreadcrumbBar();
+            reloadCurrentDirectoryFromDb();
         });
         layoutBreadcrumb.addView(tvRoot);
 
@@ -921,19 +839,16 @@ public class ScanActivity extends Activity {
             tvPart.setTextColor(0xFF1976D2);
             tvPart.setTypeface(null, android.graphics.Typeface.BOLD);
             tvPart.setPadding(4, 4, 4, 4);
-            tvPart.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    isSearching = false;
-                    etSearchBrowser.setText("");
-                    currentDirPath = targetPath;
-                    long foundId = dbHelper.getNodeId(targetPath.substring(0, targetPath.lastIndexOf('/')), part);
-                    if (foundId != -1) {
-                        currentParentId = foundId;
-                    }
-                    updateBreadcrumbBar();
-                    reloadCurrentDirectoryFromDb();
+            tvPart.setOnClickListener(v -> {
+                isSearching = false;
+                etSearchBrowser.setText("");
+                currentDirPath = targetPath;
+                long foundId = dbHelper.getNodeId(targetPath.substring(0, targetPath.lastIndexOf('/')), part);
+                if (foundId != -1) {
+                    currentParentId = foundId;
                 }
+                updateBreadcrumbBar();
+                reloadCurrentDirectoryFromDb();
             });
             layoutBreadcrumb.addView(tvPart);
         }
@@ -968,11 +883,9 @@ public class ScanActivity extends Activity {
                 updateBreadcrumbBar();
                 reloadCurrentDirectoryFromDb();
             } else {
-                // Switch back from browser to Results Dashboard
                 switchUiMode(2);
             }
         } else if (currentUiMode == 2) {
-            // From results dashboard, back exits or goes to main
             super.onBackPressed();
         } else {
             super.onBackPressed();
@@ -1235,14 +1148,11 @@ public class ScanActivity extends Activity {
             if (entry == null) return itemLayout;
 
             holder.checkBox.setChecked(entry.isSelected());
-            holder.checkBox.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    boolean newState = holder.checkBox.isChecked();
-                    dbHelper.setNodeAndSubtreeSelected(entry, newState ? 1 : 0);
-                    updateSelectionCounterAndBottomBar();
-                    notifyDataSetChanged();
-                }
+            holder.checkBox.setOnClickListener(v -> {
+                boolean newState = holder.checkBox.isChecked();
+                dbHelper.setNodeAndSubtreeSelected(entry, newState ? 1 : 0);
+                updateSelectionCounterAndBottomBar();
+                notifyDataSetChanged();
             });
 
             if (entry.isDirectory()) {
@@ -1256,20 +1166,7 @@ public class ScanActivity extends Activity {
                 holder.tvDetails.setText("גודל: " + formatSize(entry.getLength()) + " • " + dateStr);
 
                 holder.ivIcon.setImageBitmap(null);
-                if (entry.getType() == FileType.JPEG || entry.getType() == FileType.PNG) {
-                    if (byteSource != null) {
-                        try {
-                            byte[] thumbBuf = new byte[(int) Math.min(entry.getLength(), 16384)];
-                            int read = byteSource.readAt(entry.getOffset(), thumbBuf, thumbBuf.length);
-                            if (read > 0) {
-                                Bitmap bmp = BitmapFactory.decodeByteArray(thumbBuf, 0, read);
-                                if (bmp != null) holder.ivIcon.setImageBitmap(bmp);
-                            }
-                        } catch (Exception ignored) {}
-                    }
-                } else {
-                    holder.ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
-                }
+                holder.ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
             }
 
             return itemLayout;
@@ -1293,8 +1190,5 @@ public class ScanActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (byteSource != null) {
-            byteSource.close();
-        }
     }
 }
