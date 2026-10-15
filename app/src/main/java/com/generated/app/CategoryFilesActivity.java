@@ -18,8 +18,10 @@ import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -49,9 +51,9 @@ public class CategoryFilesActivity extends Activity {
     private Button btnClearSelection;
     private TextView tvSelectionCounter;
     private ListView listView;
+    private ProgressBar loadingProgress;
     private Button btnRestoreCategory;
 
-    private List<RecoveredEntry> allCategoryEntries = new ArrayList<>();
     private List<RecoveredEntry> filteredEntries = new ArrayList<>();
     private CategoryFilesAdapter adapter;
 
@@ -181,12 +183,27 @@ public class CategoryFilesActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        listView = new ListView(this);
-        root.addView(listView, new LinearLayout.LayoutParams(
+        FrameLayout listContainer = new FrameLayout(this);
+        root.addView(listContainer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1.0f
         ));
+
+        listView = new ListView(this);
+        listContainer.addView(listView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+
+        loadingProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
+        FrameLayout.LayoutParams progLp = new FrameLayout.LayoutParams(
+                (int) (48 * getResources().getDisplayMetrics().density),
+                (int) (48 * getResources().getDisplayMetrics().density),
+                Gravity.CENTER
+        );
+        listContainer.addView(loadingProgress, progLp);
+        loadingProgress.setVisibility(View.GONE);
 
         adapter = new CategoryFilesAdapter();
         listView.setAdapter(adapter);
@@ -218,7 +235,7 @@ public class CategoryFilesActivity extends Activity {
                 if (searchRunnable != null) {
                     searchHandler.removeCallbacks(searchRunnable);
                 }
-                searchRunnable = () -> applyFilterAndSearch();
+                searchRunnable = () -> loadEntries();
                 searchHandler.postDelayed(searchRunnable, 300);
             }
 
@@ -252,39 +269,33 @@ public class CategoryFilesActivity extends Activity {
     }
 
     private void loadEntries() {
+        runOnUiThread(() -> {
+            if (loadingProgress != null) loadingProgress.setVisibility(View.VISIBLE);
+        });
+
         new Thread(() -> {
-            List<RecoveredEntry> all = dbHelper.getAllEntriesForSaveAll();
-            List<RecoveredEntry> matched = new ArrayList<>();
-            for (RecoveredEntry e : all) {
-                if (!e.isDirectory() && categoryKey.equals(e.getCategory())) {
-                    matched.add(e);
-                }
+            long minSizeKb = 0;
+            try {
+                minSizeKb = Long.parseLong(etMinSizeKb.getText().toString().trim());
+            } catch (Exception ignored) {}
+            long minSizeBytes = minSizeKb * 1024;
+
+            List<RecoveredEntry> matched = dbHelper.getEntriesByCategory(categoryKey, minSizeBytes);
+            String query = etSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
+
+            List<RecoveredEntry> finalFiltered = new ArrayList<>();
+            for (RecoveredEntry e : matched) {
+                if (!query.isEmpty() && !e.getName().toLowerCase(Locale.ROOT).contains(query)) continue;
+                finalFiltered.add(e);
             }
-            allCategoryEntries = matched;
-            new Handler(Looper.getMainLooper()).post(this::applyFilterAndSearch);
+
+            filteredEntries = finalFiltered;
+            new Handler(Looper.getMainLooper()).post(() -> {
+                if (loadingProgress != null) loadingProgress.setVisibility(View.GONE);
+                adapter.notifyDataSetChanged();
+                updateSelectionCounter();
+            });
         }).start();
-    }
-
-    private void applyFilterAndSearch() {
-        String query = etSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
-        long minSizeKb = 0;
-        try {
-            minSizeKb = Long.parseLong(etMinSizeKb.getText().toString().trim());
-        } catch (Exception ignored) {}
-        long minSizeBytes = minSizeKb * 1024;
-
-        List<RecoveredEntry> temp = new ArrayList<>();
-        for (RecoveredEntry e : allCategoryEntries) {
-            if (e.getLength() < minSizeBytes) continue;
-            if (!query.isEmpty() && !e.getName().toLowerCase(Locale.ROOT).contains(query)) continue;
-            temp.add(e);
-        }
-
-        temp.sort((o1, o2) -> o1.getName().compareToIgnoreCase(o2.getName()));
-
-        filteredEntries = temp;
-        adapter.notifyDataSetChanged();
-        updateSelectionCounter();
     }
 
     private void updateSelectionCounter() {
