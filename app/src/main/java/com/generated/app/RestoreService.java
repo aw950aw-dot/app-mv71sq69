@@ -101,6 +101,7 @@ public class RestoreService extends Service {
             if (ACTION_CANCEL.equals(action)) {
                 isCancelled = true;
                 isRestoreRunning = false;
+                dbHelper.updateJobState("restore", "CANCELLED", System.currentTimeMillis(), System.currentTimeMillis(), 0, restoredFilesCount, currentBytesRestored);
                 ServiceState.getInstance().update(ServiceState.Phase.CANCELLED, restoredFilesCount, 0, currentBytesRestored, currentFileName, currentPercent, currentEtaText, "שחזור בוטל");
                 if (restoreThread != null) restoreThread.interrupt();
                 stopSelf();
@@ -130,6 +131,7 @@ public class RestoreService extends Service {
                     restoredFilesCount = stats[0];
                 }
 
+                dbHelper.updateJobState("restore", "RUNNING", System.currentTimeMillis(), System.currentTimeMillis(), 0, restoredFilesCount, currentBytesRestored);
                 ServiceState.getInstance().update(ServiceState.Phase.RESTORING, restoredFilesCount, 0, currentBytesRestored, "", 0, "מתחיל שחזור...", "");
 
                 if (wakeLock != null && !wakeLock.isHeld()) {
@@ -166,6 +168,7 @@ public class RestoreService extends Service {
                     DiagnosticReporter.logError(e, "RestoreService failed to open source");
                     String errMsg = "שגיאה בפתיחת מקור הקריאה לשחזור: " + e.getMessage();
                     isRestoreRunning = false;
+                    dbHelper.updateJobState("restore", "INTERRUPTED", System.currentTimeMillis(), System.currentTimeMillis(), 0, restoredFilesCount, currentBytesRestored);
                     updateNotification(errMsg, 0, "שחזור נכשל");
                     ServiceState.getInstance().update(ServiceState.Phase.IDLE, restoredFilesCount, 0, currentBytesRestored, "", 0, "", errMsg);
                     List<String> errs = new ArrayList<>();
@@ -413,6 +416,7 @@ public class RestoreService extends Service {
 
                 long startTime = System.currentTimeMillis();
                 long lastNotificationUpdate = 0;
+                long lastHeartbeatUpdate = 0;
                 final int windowSize = 30;
                 long[] timeHistory = new long[windowSize];
                 long[] byteHistory = new long[windowSize];
@@ -464,6 +468,11 @@ public class RestoreService extends Service {
                     }
 
                     long now = System.currentTimeMillis();
+                    if (now - lastHeartbeatUpdate >= 2000) {
+                        lastHeartbeatUpdate = now;
+                        dbHelper.updateJobState("restore", "RUNNING", startTime, now, foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
+                    }
+
                     if (now - lastHistoryTime >= 1000) {
                         timeHistory[historyIndex] = now;
                         byteHistory[historyIndex] = bytesSinceLastHistory;
@@ -501,6 +510,7 @@ public class RestoreService extends Service {
                     dbHelper.clearRestoreQueue();
                 }
 
+                dbHelper.updateJobState("restore", "COMPLETED", startTime, System.currentTimeMillis(), foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
                 finishRestore(restoredFilesCount, failedFilesCount, skippedExistingFilesCount, errorLogs);
             }
         });
@@ -655,7 +665,6 @@ public class RestoreService extends Service {
             } catch (Exception ignored) {}
         }
 
-        // Updated requirement: After a restore finishes successfully (failed == 0), clear selection (selected = 0 in DB). If restore fails, keep selection.
         if (failed == 0 && success > 0) {
             dbHelper.setAllSelected(false);
         }

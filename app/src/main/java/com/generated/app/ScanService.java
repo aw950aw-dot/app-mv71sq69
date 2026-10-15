@@ -50,6 +50,7 @@ public class ScanService extends Service {
 
     private long lastBroadcastTime = 0;
     private long lastNotificationUpdate = 0;
+    private long lastHeartbeatUpdate = 0;
     private long scanStartTime = 0;
 
     public static boolean isScanRunning() {
@@ -102,6 +103,7 @@ public class ScanService extends Service {
                 } else if (ACTION_CANCEL.equals(action)) {
                     isCancelled = true;
                     isScanRunning = false;
+                    dbHelper.updateJobState("scan", "CANCELLED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
                     ServiceState.getInstance().update(ServiceState.Phase.CANCELLED, filesCount.get(), foldersCount.get(), totalBytesScanned.get(), currentFolderPath, 0, "", "סריקה בוטלה");
                     if (scanThread != null) scanThread.interrupt();
                     stopSelf();
@@ -127,6 +129,7 @@ public class ScanService extends Service {
                 isScanRunning = true;
                 scanStartTime = System.currentTimeMillis();
 
+                dbHelper.updateJobState("scan", "RUNNING", scanStartTime, scanStartTime, 0, 0, 0);
                 ServiceState.getInstance().update(ServiceState.Phase.SCANNING, 0, 0, 0, "/", 0, "מתחיל סריקה...", "");
 
                 if (wakeLock != null && !wakeLock.isHeld()) {
@@ -156,6 +159,7 @@ public class ScanService extends Service {
                     DiagnosticReporter.log("FATAL: Failed to open source: " + e.getMessage());
                     DiagnosticReporter.logError(e, "Failed to open scan source");
                     isScanRunning = false;
+                    dbHelper.updateJobState("scan", "INTERRUPTED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
                     ServiceState.getInstance().update(ServiceState.Phase.IDLE, 0, 0, 0, "/", 0, "", e.getMessage());
                     stopSelf();
                     return START_NOT_STICKY;
@@ -167,12 +171,14 @@ public class ScanService extends Service {
                     startScanThread();
                 } else {
                     isScanRunning = false;
+                    dbHelper.updateJobState("scan", "INTERRUPTED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
                     stopSelf();
                 }
             }
         } catch (Throwable t) {
             DiagnosticReporter.logError(t, "Exception in ScanService.onStartCommand");
             isScanRunning = false;
+            dbHelper.updateJobState("scan", "INTERRUPTED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
             ServiceState.getInstance().update(ServiceState.Phase.IDLE, 0, 0, 0, "/", 0, "", t.getMessage());
             stopSelf();
         }
@@ -288,6 +294,7 @@ public class ScanService extends Service {
                                         filesCount.incrementAndGet();
                                     }
                                 }
+                                checkAndRecordHeartbeat();
                                 throttleBroadcast(currentFolderPath, 0, "");
                                 throttleNotificationIndeterminate();
                             }
@@ -301,6 +308,7 @@ public class ScanService extends Service {
                             if (currentFolder != null) {
                                 currentFolderPath = currentFolder;
                             }
+                            checkAndRecordHeartbeat();
                             throttleBroadcast(currentFolderPath, 0, "");
                             throttleNotificationIndeterminate();
                         }
@@ -347,11 +355,13 @@ public class ScanService extends Service {
                                 single.add(entry);
                                 dbHelper.insertEntriesInBatch(single);
                                 filesCount.incrementAndGet();
+                                checkAndRecordHeartbeat();
                                 throttleBroadcast("/Carved files/" + typeFolderName, 0, "");
                             }
 
                             @Override
                             public void onProgress(long bytesScanned, long totalBytes) {
+                                totalBytesScanned.set(bytesScanned);
                                 int percent = totalBytes > 0 ? (int) ((bytesScanned * 100) / totalBytes) : 0;
                                 long elapsedMs = System.currentTimeMillis() - deepScanStartTime;
                                 double speedBytesPerSec = elapsedMs > 500 ? (bytesScanned * 1000.0) / elapsedMs : 0;
@@ -359,6 +369,7 @@ public class ScanService extends Service {
                                 long remainingBytes = totalBytes - bytesScanned;
                                 long etaSec = speedBytesPerSec > 1024 ? (long) (remainingBytes / speedBytesPerSec) : 0;
 
+                                checkAndRecordHeartbeat();
                                 throttleNotificationDeterminate(percent, speedMbSec, etaSec);
                                 ServiceState.getInstance().update(ServiceState.Phase.SCANNING, filesCount.get(), foldersCount.get(), bytesScanned, "סריקה עמוקה (Carving)", percent, etaSec + "s", "");
                                 broadcastProgress("סריקה עמוקה (Carving)", filesCount.get(), foldersCount.get());
@@ -366,11 +377,12 @@ public class ScanService extends Service {
                         });
                     }
 
-                    // Requested feature: Compute the number of files and total size of every folder ONCE at the end of the scan
                     dbHelper.computeAndStoreFolderTotals();
+                    dbHelper.updateJobState("scan", "COMPLETED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
 
                 } catch (Exception e) {
                     DiagnosticReporter.logError(e, "Scan thread exception caught.");
+                    dbHelper.updateJobState("scan", "INTERRUPTED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
                     ServiceState.getInstance().update(ServiceState.Phase.IDLE, filesCount.get(), foldersCount.get(), totalBytesScanned.get(), currentFolderPath, 0, "", e.getMessage());
                 } finally {
                     isScanRunning = false;
@@ -396,6 +408,14 @@ public class ScanService extends Service {
             }
         });
         scanThread.start();
+    }
+
+    private void checkAndRecordHeartbeat() {
+        long now = System.currentTimeMillis();
+        if (now - lastHeartbeatUpdate >= 2000) {
+            lastHeartbeatUpdate = now;
+            dbHelper.updateJobState("scan", "RUNNING", scanStartTime, now, foldersCount.get(), filesCount.get(), totalBytesScanned.get());
+        }
     }
 
     private synchronized void throttleBroadcast(String currentFolder, int percent, String eta) {

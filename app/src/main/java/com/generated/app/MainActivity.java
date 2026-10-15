@@ -11,7 +11,6 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.database.Cursor;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
@@ -112,11 +111,20 @@ public class MainActivity extends Activity {
                     .build());
         }
         
-        if (ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
-            startActivity(new Intent(this, ScanActivity.class));
-            finish();
-            return;
-        }
+        // Check job state per requirement
+        new Thread(() -> {
+            DatabaseHelper db = DatabaseHelper.getInstance(MainActivity.this);
+            db.checkAndInterruptStaleJobs();
+            String scanPhase = db.getJobPhase("scan");
+            String restorePhase = db.getJobPhase("restore");
+            if ("RUNNING".equalsIgnoreCase(scanPhase) || "RUNNING".equalsIgnoreCase(restorePhase) ||
+                ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
+                mainHandler.post(() -> {
+                    startActivity(new Intent(MainActivity.this, ScanActivity.class));
+                    finish();
+                });
+            }
+        }).start();
 
         checkSavedScanStateOffMainThread();
 

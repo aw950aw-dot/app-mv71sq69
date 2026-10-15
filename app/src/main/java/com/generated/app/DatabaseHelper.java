@@ -14,7 +14,7 @@ import java.util.Map;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "sd_rescue.db";
-    private static final int DATABASE_VERSION = 12;
+    private static final int DATABASE_VERSION = 13;
 
     public static final String TABLE_NODES = "nodes";
     public static final String COL_ID = "id";
@@ -39,6 +39,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String TABLE_META = "metadata";
     private static final String COL_META_KEY = "key";
     private static final String COL_META_VAL = "value";
+
+    public static final String TABLE_JOB_STATE = "job_state";
+    public static final String COL_JOB_TYPE = "job_type"; // "scan" or "restore"
+    public static final String COL_JOB_PHASE = "phase"; // "RUNNING", "COMPLETED", "INTERRUPTED", "CANCELLED"
+    public static final String COL_JOB_STARTED_AT = "started_at";
+    public static final String COL_JOB_HEARTBEAT = "last_heartbeat";
+    public static final String COL_JOB_FOLDERS = "folders";
+    public static final String COL_JOB_FILES = "files";
+    public static final String COL_JOB_BYTES = "bytes";
 
     private static DatabaseHelper instance;
 
@@ -94,7 +103,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 COL_META_VAL + " TEXT)";
         db.execSQL(createMeta);
 
-        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
+        String createJobState = "CREATE TABLE " + TABLE_JOB_STATE + " (" +
+                COL_JOB_TYPE + " TEXT PRIMARY KEY, " +
+                COL_JOB_PHASE + " TEXT, " +
+                COL_JOB_STARTED_AT + " INTEGER, " +
+                COL_JOB_HEARTBEAT + " INTEGER, " +
+                COL_JOB_FOLDERS + " INTEGER, " +
+                COL_JOB_FILES + " INTEGER, " +
+                COL_JOB_BYTES + " INTEGER)";
+        db.execSQL(createJobState);
+
+        db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '13')");
 
         db.execSQL("CREATE INDEX idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
         db.execSQL("CREATE INDEX idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
@@ -104,23 +123,78 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 12) {
+        if (oldVersion < 13) {
             try {
-                db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_FILE_COUNT + " INTEGER DEFAULT 0");
-                db.execSQL("ALTER TABLE " + TABLE_NODES + " ADD COLUMN " + COL_TOTAL_SIZE + " INTEGER DEFAULT 0");
-
-                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
-                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
-                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_selected ON " + TABLE_NODES + "(" + COL_SELECTED + ")");
-                db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
-
-                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
+                String createJobState = "CREATE TABLE IF NOT EXISTS " + TABLE_JOB_STATE + " (" +
+                        COL_JOB_TYPE + " TEXT PRIMARY KEY, " +
+                        COL_JOB_PHASE + " TEXT, " +
+                        COL_JOB_STARTED_AT + " INTEGER, " +
+                        COL_JOB_HEARTBEAT + " INTEGER, " +
+                        COL_JOB_FOLDERS + " INTEGER, " +
+                        COL_JOB_FILES + " INTEGER, " +
+                        COL_JOB_BYTES + " INTEGER)";
+                db.execSQL(createJobState);
+                db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '13')");
                 return;
             } catch (Exception ignored) {}
         }
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_NODES);
         db.execSQL("DROP TABLE IF EXISTS " + TABLE_META);
+        db.execSQL("DROP TABLE IF EXISTS " + TABLE_JOB_STATE);
         onCreate(db);
+    }
+
+    public synchronized void updateJobState(String jobType, String phase, long startedAt, long heartbeat, int folders, int files, long bytes) {
+        SQLiteDatabase db = getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put(COL_JOB_TYPE, jobType);
+        cv.put(COL_JOB_PHASE, phase);
+        cv.put(COL_JOB_STARTED_AT, startedAt);
+        cv.put(COL_JOB_HEARTBEAT, heartbeat);
+        cv.put(COL_JOB_FOLDERS, folders);
+        cv.put(COL_JOB_FILES, files);
+        cv.put(COL_JOB_BYTES, bytes);
+        db.insertWithOnConflict(TABLE_JOB_STATE, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public synchronized void checkAndInterruptStaleJobs() {
+        SQLiteDatabase db = getWritableDatabase();
+        long now = System.currentTimeMillis();
+        try {
+            Cursor c = db.rawQuery("SELECT " + COL_JOB_TYPE + ", " + COL_JOB_PHASE + ", " + COL_JOB_HEARTBEAT + " FROM " + TABLE_JOB_STATE, null);
+            if (c != null) {
+                while (c.moveToNext()) {
+                    String type = c.getString(0);
+                    String phase = c.getString(1);
+                    long heartbeat = c.getLong(2);
+                    if ("RUNNING".equalsIgnoreCase(phase) && (now - heartbeat > 15000)) {
+                        db.execSQL("UPDATE " + TABLE_JOB_STATE + " SET " + COL_JOB_PHASE + "='INTERRUPTED' WHERE " + COL_JOB_TYPE + "=?", new Object[]{type});
+                    }
+                }
+                c.close();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public synchronized String getJobPhase(String jobType) {
+        SQLiteDatabase db = getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + COL_JOB_PHASE + " FROM " + TABLE_JOB_STATE + " WHERE " + COL_JOB_TYPE + "=?", new String[]{jobType});
+        if (c != null) {
+            if (c.moveToFirst()) {
+                String phase = c.getString(0);
+                c.close();
+                return phase;
+            }
+            c.close();
+        }
+        return "IDLE";
+    }
+
+    public synchronized void clearJobState(String jobType) {
+        SQLiteDatabase db = getWritableDatabase();
+        try {
+            db.execSQL("DELETE FROM " + TABLE_JOB_STATE + " WHERE " + COL_JOB_TYPE + "=?", new Object[]{jobType});
+        } catch (Exception ignored) {}
     }
 
     public synchronized boolean isOlderVersionDb() {
@@ -132,7 +206,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 if (c.moveToFirst()) {
                     String ver = c.getString(0);
                     c.close();
-                    if ("12".equals(ver)) {
+                    if ("13".equals(ver)) {
                         return false;
                     }
                 } else {
@@ -162,7 +236,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             SQLiteDatabase db = getWritableDatabase();
             db.execSQL("DELETE FROM " + TABLE_NODES);
-            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '12')");
+            db.execSQL("DELETE FROM " + TABLE_JOB_STATE);
+            db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '13')");
         } catch (Exception ignored) {}
         finally {
             PerformanceLogger.record("clearDatabase", System.currentTimeMillis() - start);
@@ -641,7 +716,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getInt(17);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -689,7 +764,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getInt(17);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -737,7 +812,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getInt(17);
+                long totalSize = c.getLong(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
