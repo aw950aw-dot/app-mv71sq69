@@ -209,7 +209,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // then recursively propagate up the tree or iterate by depth level.
             // Since we want robust and lightning fast performance, we fetch all nodes into memory (id, parent_id, is_dir, size)
             // and compute bottom-up in RAM, then batch update.
-            Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_SIZE + FROM + TABLE_NODES, null);
+            Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_SIZE + " FROM " + TABLE_NODES, null);
             if (c != null) {
                 Map<Long, Long> parentMap = new HashMap<>();
                 Map<Long, Boolean> isDirMap = new HashMap<>();
