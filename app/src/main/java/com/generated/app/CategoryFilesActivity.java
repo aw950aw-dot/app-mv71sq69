@@ -14,18 +14,14 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import androidx.annotation.NonNull;
-import androidx.recyclerview.widget.DiffUtil;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.ListAdapter;
-import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +48,7 @@ public class CategoryFilesActivity extends Activity {
     private Button btnSelectAll;
     private Button btnClearSelection;
     private TextView tvSelectionCounter;
-    private RecyclerView recyclerView;
+    private ListView listView;
     private Button btnRestoreCategory;
 
     private List<RecoveredEntry> allCategoryEntries = new ArrayList<>();
@@ -185,16 +181,15 @@ public class CategoryFilesActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        recyclerView = new RecyclerView(this);
-        recyclerView.setLayoutManager(new LinearLayoutManager(this));
-        root.addView(recyclerView, new LinearLayout.LayoutParams(
+        listView = new ListView(this);
+        root.addView(listView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1.0f
         ));
 
         adapter = new CategoryFilesAdapter();
-        recyclerView.setAdapter(adapter);
+        listView.setAdapter(adapter);
 
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -239,7 +234,7 @@ public class CategoryFilesActivity extends Activity {
                 e.setSelectedState(1);
             }
             updateSelectionCounter();
-            adapter.submitList(new ArrayList<>(filteredEntries));
+            adapter.notifyDataSetChanged();
         });
 
         btnClearSelection.setOnClickListener(v -> {
@@ -247,7 +242,7 @@ public class CategoryFilesActivity extends Activity {
                 e.setSelectedState(0);
             }
             updateSelectionCounter();
-            adapter.submitList(new ArrayList<>(filteredEntries));
+            adapter.notifyDataSetChanged();
         });
 
         btnRestoreCategory.setOnClickListener(v -> promptRestoreOptions());
@@ -288,7 +283,7 @@ public class CategoryFilesActivity extends Activity {
         temp.sort((o1, o2) -> o1.getName().compareToIgnoreCase(o2.getName()));
 
         filteredEntries = temp;
-        adapter.submitList(new ArrayList<>(filteredEntries));
+        adapter.notifyDataSetChanged();
         updateSelectionCounter();
     }
 
@@ -391,97 +386,99 @@ public class CategoryFilesActivity extends Activity {
         }).start();
     }
 
-    private static class CategoryFilesDiffCallback extends DiffUtil.ItemCallback<RecoveredEntry> {
+    private class CategoryFilesAdapter extends BaseAdapter {
         @Override
-        public boolean areItemsTheSame(@NonNull RecoveredEntry oldItem, @NonNull RecoveredEntry newItem) {
-            return oldItem.getId() == newItem.getId();
+        public int getCount() {
+            return filteredEntries.size();
         }
 
         @Override
-        public boolean areContentsTheSame(@NonNull RecoveredEntry oldItem, @NonNull RecoveredEntry newItem) {
-            return oldItem.getId() == newItem.getId() &&
-                    oldItem.isSelected() == newItem.isSelected() &&
-                    oldItem.getName().equals(newItem.getName()) &&
-                    oldItem.getLength() == newItem.getLength();
-        }
-    }
-
-    private class CategoryFilesAdapter extends ListAdapter<RecoveredEntry, CategoryFilesAdapter.CategoryFileViewHolder> {
-
-        protected CategoryFilesAdapter() {
-            super(new CategoryFilesDiffCallback());
-        }
-
-        @NonNull
-        @Override
-        public CategoryFileViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            LinearLayout itemLayout = new LinearLayout(CategoryFilesActivity.this);
-            itemLayout.setOrientation(LinearLayout.HORIZONTAL);
-            itemLayout.setGravity(Gravity.CENTER_VERTICAL);
-            int pad = (int) (10 * getResources().getDisplayMetrics().density);
-            itemLayout.setPadding(pad, pad, pad, pad);
-            itemLayout.setBackgroundColor(0xFFFFFFFF);
-            itemLayout.setLayoutParams(new RecyclerView.LayoutParams(
-                    RecyclerView.LayoutParams.MATCH_PARENT,
-                    RecyclerView.LayoutParams.WRAP_CONTENT
-            ));
-
-            CheckBox checkBox = new CheckBox(CategoryFilesActivity.this);
-            checkBox.setFocusable(false);
-            itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-            ));
-
-            LinearLayout textLayout = new LinearLayout(CategoryFilesActivity.this);
-            textLayout.setOrientation(LinearLayout.VERTICAL);
-            LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1.0f
-            );
-            textLp.leftMargin = pad;
-            itemLayout.addView(textLayout, textLp);
-
-            TextView tvName = new TextView(CategoryFilesActivity.this);
-            tvName.setTextSize(15);
-            tvName.setTextColor(0xFF333333);
-            textLayout.addView(tvName);
-
-            TextView tvSubtitle = new TextView(CategoryFilesActivity.this);
-            tvSubtitle.setTextSize(12);
-            tvSubtitle.setTextColor(0xFF757575);
-            textLayout.addView(tvSubtitle);
-
-            return new CategoryFileViewHolder(itemLayout, checkBox, tvName, tvSubtitle);
+        public Object getItem(int position) {
+            return filteredEntries.get(position);
         }
 
         @Override
-        public void onBindViewHolder(@NonNull CategoryFileViewHolder holder, int position) {
-            final RecoveredEntry entry = getItem(position);
-            holder.checkBox.setChecked(entry.isSelected());
-            holder.tvName.setText(entry.getName());
-            holder.tvSubtitle.setText(String.format(Locale.getDefault(), "נתיב: %s • גודל: %s", entry.getPath(), formatSize(entry.getLength())));
+        public long getItemId(int position) {
+            RecoveredEntry entry = filteredEntries.get(position);
+            return entry != null ? entry.getId() : position;
+        }
 
-            holder.checkBox.setOnClickListener(v -> {
-                entry.setSelectedState(holder.checkBox.isChecked() ? 1 : 0);
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            LinearLayout itemLayout;
+            CheckBox checkBox;
+            TextView tvName;
+            TextView tvSubtitle;
+
+            if (convertView == null) {
+                itemLayout = new LinearLayout(CategoryFilesActivity.this);
+                itemLayout.setOrientation(LinearLayout.HORIZONTAL);
+                itemLayout.setGravity(Gravity.CENTER_VERTICAL);
+                int pad = (int) (10 * getResources().getDisplayMetrics().density);
+                itemLayout.setPadding(pad, pad, pad, pad);
+                itemLayout.setBackgroundColor(0xFFFFFFFF);
+
+                checkBox = new CheckBox(CategoryFilesActivity.this);
+                checkBox.setFocusable(false);
+                itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                ));
+
+                LinearLayout textLayout = new LinearLayout(CategoryFilesActivity.this);
+                textLayout.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        1.0f
+                );
+                textLp.leftMargin = pad;
+                itemLayout.addView(textLayout, textLp);
+
+                tvName = new TextView(CategoryFilesActivity.this);
+                tvName.setTextSize(15);
+                tvName.setTextColor(0xFF333333);
+                textLayout.addView(tvName);
+
+                tvSubtitle = new TextView(CategoryFilesActivity.this);
+                tvSubtitle.setTextSize(12);
+                tvSubtitle.setTextColor(0xFF757575);
+                textLayout.addView(tvSubtitle);
+
+                itemLayout.setTag(new CategoryFileViewHolder(checkBox, tvName, tvSubtitle));
+            } else {
+                itemLayout = (LinearLayout) convertView;
+                CategoryFileViewHolder holder = (CategoryFileViewHolder) itemLayout.getTag();
+                checkBox = holder.checkBox;
+                tvName = holder.tvName;
+                tvSubtitle = holder.tvSubtitle;
+            }
+
+            final RecoveredEntry entry = filteredEntries.get(position);
+            checkBox.setChecked(entry.isSelected());
+            tvName.setText(entry.getName());
+            tvSubtitle.setText(String.format(Locale.getDefault(), "נתיב: %s • גודל: %s", entry.getPath(), formatSize(entry.getLength())));
+
+            checkBox.setOnClickListener(v -> {
+                entry.setSelectedState(checkBox.isChecked() ? 1 : 0);
                 updateSelectionCounter();
             });
 
-            holder.itemView.setOnClickListener(v -> {
+            itemLayout.setOnClickListener(v -> {
                 boolean newState = !entry.isSelected();
                 entry.setSelectedState(newState ? 1 : 0);
-                holder.checkBox.setChecked(newState);
+                checkBox.setChecked(newState);
                 updateSelectionCounter();
             });
+
+            return itemLayout;
         }
 
-        class CategoryFileViewHolder extends RecyclerView.ViewHolder {
+        class CategoryFileViewHolder {
             final CheckBox checkBox;
             final TextView tvName;
             final TextView tvSubtitle;
-            CategoryFileViewHolder(View itemView, CheckBox checkBox, TextView tvName, TextView tvSubtitle) {
-                super(itemView);
+            CategoryFileViewHolder(CheckBox checkBox, TextView tvName, TextView tvSubtitle) {
                 this.checkBox = checkBox;
                 this.tvName = tvName;
                 this.tvSubtitle = tvSubtitle;

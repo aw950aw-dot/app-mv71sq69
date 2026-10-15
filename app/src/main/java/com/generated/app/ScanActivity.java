@@ -20,21 +20,17 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import androidx.annotation.NonNull;
-import androidx.recyclerview.widget.DiffUtil;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.ListAdapter;
-import androidx.recyclerview.widget.RecyclerView;
 
 import java.io.OutputStream;
 import java.io.PrintWriter;
@@ -85,7 +81,7 @@ public class ScanActivity extends Activity {
     private EditText etSearchBrowser;
     private Button btnSelectAllBrowser;
     private Button btnDeselectAllBrowser;
-    private RecyclerView recyclerViewBrowser;
+    private ListView listViewBrowser;
     private ProgressBar browserLoadingProgress;
     private LinearLayout bottomBarRestore;
     private TextView tvRestoreSelectionInfo;
@@ -606,13 +602,12 @@ public class ScanActivity extends Activity {
         layoutFolderBrowser.addView(browserLoadingProgress, bProgLp);
         browserLoadingProgress.setVisibility(View.GONE);
 
-        recyclerViewBrowser = new RecyclerView(this);
-        recyclerViewBrowser.setLayoutManager(new LinearLayoutManager(this));
-        layoutFolderBrowser.addView(recyclerViewBrowser, new LinearLayout.LayoutParams(
+        listViewBrowser = new ListView(this);
+        layoutFolderBrowser.addView(listViewBrowser, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
         browserAdapter = new TreeEntryAdapter();
-        recyclerViewBrowser.setAdapter(browserAdapter);
+        listViewBrowser.setAdapter(browserAdapter);
 
         bottomBarRestore = new LinearLayout(this);
         bottomBarRestore.setOrientation(LinearLayout.HORIZONTAL);
@@ -799,7 +794,7 @@ public class ScanActivity extends Activity {
                 browserLoadingProgress.setVisibility(View.GONE);
                 searchResults = results;
                 currentDirEntries = searchResults;
-                browserAdapter.submitList(new ArrayList<>(currentDirEntries));
+                browserAdapter.notifyDataSetChanged();
             });
         }).start();
     }
@@ -830,7 +825,7 @@ public class ScanActivity extends Activity {
                 currentDirEntries = list;
                 updateBreadcrumbBar();
                 updateSelectionCounterAndBottomBar();
-                browserAdapter.submitList(new ArrayList<>(currentDirEntries));
+                browserAdapter.notifyDataSetChanged();
             });
         }).start();
     }
@@ -1131,91 +1126,86 @@ public class ScanActivity extends Activity {
                 .show();
     }
 
-    private static class TreeEntryDiffCallback extends DiffUtil.ItemCallback<RecoveredEntry> {
+    private class TreeEntryAdapter extends BaseAdapter {
         @Override
-        public boolean areItemsTheSame(@NonNull RecoveredEntry oldItem, @NonNull RecoveredEntry newItem) {
-            return oldItem.getId() == newItem.getId();
+        public int getCount() {
+            return currentDirEntries.size();
         }
 
         @Override
-        public boolean areContentsTheSame(@NonNull RecoveredEntry oldItem, @NonNull RecoveredEntry newItem) {
-            return oldItem.getId() == newItem.getId() &&
-                    oldItem.isSelected() == newItem.isSelected() &&
-                    oldItem.getName().equals(newItem.getName()) &&
-                    oldItem.getLength() == newItem.getLength() &&
-                    oldItem.isDirectory() == newItem.isDirectory();
-        }
-    }
-
-    private class TreeEntryAdapter extends ListAdapter<RecoveredEntry, TreeEntryAdapter.TreeEntryViewHolder> {
-
-        protected TreeEntryAdapter() {
-            super(new TreeEntryDiffCallback());
-            setHasStableIds(true);
+        public Object getItem(int position) {
+            return currentDirEntries.get(position);
         }
 
         @Override
         public long getItemId(int position) {
-            RecoveredEntry item = getItem(position);
+            RecoveredEntry item = currentDirEntries.get(position);
             return item != null ? item.getId() : position;
         }
 
-        @NonNull
         @Override
-        public TreeEntryViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            // Flat row layout with a single container to prevent nested layout performance overhead
-            LinearLayout itemLayout = new LinearLayout(ScanActivity.this);
-            itemLayout.setOrientation(LinearLayout.HORIZONTAL);
-            itemLayout.setGravity(Gravity.CENTER_VERTICAL);
-            itemLayout.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-            int pad = (int) (12 * getResources().getDisplayMetrics().density);
-            itemLayout.setPadding(pad, pad, pad, pad);
-            itemLayout.setBackgroundColor(0xFFFFFFFF);
-            itemLayout.setLayoutParams(new RecyclerView.LayoutParams(
-                    RecyclerView.LayoutParams.MATCH_PARENT,
-                    RecyclerView.LayoutParams.WRAP_CONTENT
-            ));
+        public View getView(int position, View convertView, ViewGroup parent) {
+            LinearLayout itemLayout;
+            CheckBox checkBox;
+            ImageView ivIcon;
+            TextView tvName;
+            TextView tvDetails;
 
-            CheckBox checkBox = new CheckBox(ScanActivity.this);
-            checkBox.setFocusable(false);
-            checkBox.setClickable(true);
-            itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            if (convertView == null) {
+                // Flat row layout with a single container to prevent nested layout performance overhead
+                itemLayout = new LinearLayout(ScanActivity.this);
+                itemLayout.setOrientation(LinearLayout.HORIZONTAL);
+                itemLayout.setGravity(Gravity.CENTER_VERTICAL);
+                itemLayout.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+                int pad = (int) (12 * getResources().getDisplayMetrics().density);
+                itemLayout.setPadding(pad, pad, pad, pad);
+                itemLayout.setBackgroundColor(0xFFFFFFFF);
 
-            ImageView ivIcon = new ImageView(ScanActivity.this);
-            int iconSize = (int) (36 * getResources().getDisplayMetrics().density);
-            LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(iconSize, iconSize);
-            imgParams.leftMargin = pad;
-            imgParams.rightMargin = pad;
-            ivIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            itemLayout.addView(ivIcon, imgParams);
+                checkBox = new CheckBox(ScanActivity.this);
+                checkBox.setFocusable(false);
+                checkBox.setClickable(true);
+                itemLayout.addView(checkBox, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-            LinearLayout textLayout = new LinearLayout(ScanActivity.this);
-            textLayout.setOrientation(LinearLayout.VERTICAL);
-            itemLayout.addView(textLayout, new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+                ivIcon = new ImageView(ScanActivity.this);
+                int iconSize = (int) (36 * getResources().getDisplayMetrics().density);
+                LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(iconSize, iconSize);
+                imgParams.leftMargin = pad;
+                imgParams.rightMargin = pad;
+                ivIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                itemLayout.addView(ivIcon, imgParams);
 
-            TextView tvName = new TextView(ScanActivity.this);
-            tvName.setTextSize(15);
-            tvName.setTextColor(0xFF333333);
-            textLayout.addView(tvName);
+                LinearLayout textLayout = new LinearLayout(ScanActivity.this);
+                textLayout.setOrientation(LinearLayout.VERTICAL);
+                itemLayout.addView(textLayout, new LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-            TextView tvDetails = new TextView(ScanActivity.this);
-            tvDetails.setTextSize(13);
-            tvDetails.setTextColor(0xFF757575);
-            textLayout.addView(tvDetails);
+                tvName = new TextView(ScanActivity.this);
+                tvName.setTextSize(15);
+                tvName.setTextColor(0xFF333333);
+                textLayout.addView(tvName);
 
-            return new TreeEntryViewHolder(itemLayout, checkBox, ivIcon, tvName, tvDetails);
-        }
+                tvDetails = new TextView(ScanActivity.this);
+                tvDetails.setTextSize(13);
+                tvDetails.setTextColor(0xFF757575);
+                textLayout.addView(tvDetails);
 
-        @Override
-        public void onBindViewHolder(@NonNull TreeEntryViewHolder holder, int position) {
-            final RecoveredEntry entry = getItem(position);
-            if (entry == null) return;
+                itemLayout.setTag(new TreeEntryViewHolder(checkBox, ivIcon, tvName, tvDetails));
+            } else {
+                itemLayout = (LinearLayout) convertView;
+                TreeEntryViewHolder holder = (TreeEntryViewHolder) itemLayout.getTag();
+                checkBox = holder.checkBox;
+                ivIcon = holder.ivIcon;
+                tvName = holder.tvName;
+                tvDetails = holder.tvDetails;
+            }
 
-            holder.checkBox.setChecked(entry.isSelected());
-            holder.checkBox.setOnClickListener(v -> {
-                boolean newState = holder.checkBox.isChecked();
+            final RecoveredEntry entry = currentDirEntries.get(position);
+            if (entry == null) return itemLayout;
+
+            checkBox.setChecked(entry.isSelected());
+            checkBox.setOnClickListener(v -> {
+                boolean newState = checkBox.isChecked();
                 browserLoadingProgress.setVisibility(View.VISIBLE);
                 new Thread(() -> {
                     dbHelper.setNodeAndSubtreeSelected(entry, newState ? 1 : 0);
@@ -1225,20 +1215,20 @@ public class ScanActivity extends Activity {
             });
 
             if (entry.isDirectory()) {
-                holder.ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
-                holder.tvName.setText("📁 " + entry.getName());
+                ivIcon.setImageResource(android.R.drawable.ic_menu_agenda);
+                tvName.setText("📁 " + entry.getName());
                 String folderDesc = String.format(Locale.getDefault(), "%d קבצים • %s", entry.getCachedRecursiveFileCount(), formatSize(entry.getCachedRecursiveSize()));
-                holder.tvDetails.setText(folderDesc);
+                tvDetails.setText(folderDesc);
             } else {
-                holder.tvName.setText(entry.getName());
+                tvName.setText(entry.getName());
                 String dateStr = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(new Date(entry.getModifiedTime()));
-                holder.tvDetails.setText("גודל: " + formatSize(entry.getLength()) + " • " + dateStr);
+                tvDetails.setText("גודל: " + formatSize(entry.getLength()) + " • " + dateStr);
 
-                holder.ivIcon.setImageBitmap(null);
-                holder.ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
+                ivIcon.setImageBitmap(null);
+                ivIcon.setImageResource(android.R.drawable.ic_menu_gallery);
             }
 
-            holder.itemView.setOnClickListener(v -> {
+            itemLayout.setOnClickListener(v -> {
                 if (entry.isDirectory()) {
                     isSearching = false;
                     etSearchBrowser.setText("");
@@ -1250,16 +1240,17 @@ public class ScanActivity extends Activity {
                     showRawBytesHexDialog(entry);
                 }
             });
+
+            return itemLayout;
         }
 
-        class TreeEntryViewHolder extends RecyclerView.ViewHolder {
+        class TreeEntryViewHolder {
             final CheckBox checkBox;
             final ImageView ivIcon;
             final TextView tvName;
             final TextView tvDetails;
 
-            TreeEntryViewHolder(View itemView, CheckBox checkBox, ImageView ivIcon, TextView tvName, TextView tvDetails) {
-                super(itemView);
+            TreeEntryViewHolder(CheckBox checkBox, ImageView ivIcon, TextView tvName, TextView tvDetails) {
                 this.checkBox = checkBox;
                 this.ivIcon = ivIcon;
                 this.tvName = tvName;

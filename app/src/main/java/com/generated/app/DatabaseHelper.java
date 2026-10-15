@@ -330,7 +330,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return 1L;
     }
 
-    // Upgraded method using keeset paging (LIMIT 100)
     public synchronized List<RecoveredEntry> getChildrenOfDirectory(long parentId) {
         return getChildrenOfDirectoryPaged(parentId, 0, 100);
     }
@@ -588,7 +587,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getLong(17);
+                long totalSize = c.getInt(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -634,7 +633,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getLong(17);
+                long totalSize = c.getInt(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
@@ -680,7 +679,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getLong(17);
+                long totalSize = c.getInt(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
