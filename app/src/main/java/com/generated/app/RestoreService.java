@@ -134,7 +134,7 @@ public class RestoreService extends Service {
                 }
 
                 dbHelper.updateJobState("restore", "RUNNING", System.currentTimeMillis(), System.currentTimeMillis(), 0, restoredFilesCount, currentBytesRestored);
-                ServiceState.getInstance().update(ServiceState.Phase.RESTORING, restoredFilesCount, 0, currentBytesRestored, "", 0, "מתחיל שחזור...", "");
+                ServiceState.getInstance().updateRestore(restoredFilesCount, totalFilesCount, currentBytesRestored, totalBytesCount, "", 0, 0);
 
                 if (wakeLock != null && !wakeLock.isHeld()) {
                     wakeLock.acquire(4 * 60 * 60 * 1000L);
@@ -500,7 +500,15 @@ public class RestoreService extends Service {
                     currentEtaText = String.format(Locale.getDefault(), "קבצים %d מתוך %d · %.2f GB מתוך %.2f GB · נשארו כ-%d דקות",
                             (restoredFilesCount + skippedExistingFilesCount + failedFilesCount), totalFilesCount, gbRestored, gbTotal, remainingMin);
 
-                    ServiceState.getInstance().update(ServiceState.Phase.RESTORING, restoredFilesCount, 0, currentBytesRestored, currentFileName, currentPercent, currentEtaText, "");
+                    ServiceState.getInstance().updateRestore(
+                            (restoredFilesCount + skippedExistingFilesCount + failedFilesCount),
+                            totalFilesCount,
+                            currentBytesRestored,
+                            totalBytesCount,
+                            currentFileName,
+                            currentPercent,
+                            currentRemainingSec
+                    );
 
                     if (now - lastNotificationUpdate >= 500) {
                         lastNotificationUpdate = now;

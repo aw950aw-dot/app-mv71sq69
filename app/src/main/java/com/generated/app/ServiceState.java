@@ -19,6 +19,11 @@ public class ServiceState {
     private String etaText = "";
     private String errorText = "";
 
+    private String currentFileName = "";
+    private int totalFiles = 0;
+    private long totalBytes = 0;
+    private long remainingSec = 0;
+
     private static final ServiceState instance = new ServiceState();
 
     public static ServiceState getInstance() {
@@ -36,6 +41,17 @@ public class ServiceState {
         if (error != null) this.errorText = error;
     }
 
+    public synchronized void updateRestore(int filesDone, int totalFiles, long bytesDone, long totalBytes, String currentFile, int percent, long remainingSec) {
+        this.phase = Phase.RESTORING;
+        this.filesCount = filesDone;
+        this.totalFiles = totalFiles;
+        this.totalBytesScanned = bytesDone;
+        this.totalBytes = totalBytes;
+        if (currentFile != null) this.currentFileName = currentFile;
+        this.percent = percent;
+        this.remainingSec = remainingSec;
+    }
+
     public synchronized Phase getPhase() { return phase; }
     public synchronized int getFilesCount() { return filesCount; }
     public synchronized int getFoldersCount() { return foldersCount; }
@@ -44,4 +60,8 @@ public class ServiceState {
     public synchronized int getPercent() { return percent; }
     public synchronized String getEtaText() { return etaText; }
     public synchronized String getErrorText() { return errorText; }
+    public synchronized String getCurrentFileName() { return currentFileName; }
+    public synchronized int getTotalFiles() { return totalFiles; }
+    public synchronized long getTotalBytes() { return totalBytes; }
+    public synchronized long getRemainingSec() { return remainingSec; }
 }

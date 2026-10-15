@@ -4,8 +4,10 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Typeface;
 import android.os.Build;
 import android.text.TextUtils;
+import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -17,15 +19,15 @@ import java.util.Locale;
 
 public class RestoreProgressBarView extends LinearLayout {
 
-    private final TextView tvFileName;
-    private final ProgressBar progressBar;
-    private final TextView tvPercent;
-    private final TextView tvFilesProgress;
-    private final TextView tvBytesProgress;
-    private final TextView tvEta;
-    private final Button btnCancel;
+    private TextView tvFileName;
+    private ProgressBar progressBar;
+    private TextView tvPercent;
+    private TextView tvFilesProgress;
+    private TextView tvBytesProgress;
+    private TextView tvEta;
+    private Button btnCancel;
 
-    private final BroadcastReceiver restoreProgressReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver restoreReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent == null || intent.getAction() == null) return;
@@ -43,7 +45,7 @@ public class RestoreProgressBarView extends LinearLayout {
                 String currentFile = intent.getStringExtra("current_file");
                 long remainingSec = intent.getLongExtra("remaining_sec", 0);
 
-                updateState(restored + skipped + failed, total, percent, bytesDone, bytesTotal, currentFile, remainingSec);
+                updateDisplay(restored + skipped + failed, total, percent, bytesDone, bytesTotal, currentFile, remainingSec);
             } else if (RestoreService.ACTION_COMPLETED.equals(action)) {
                 setVisibility(View.GONE);
             }
@@ -51,28 +53,40 @@ public class RestoreProgressBarView extends LinearLayout {
     };
 
     public RestoreProgressBarView(Context context) {
-        super(context);
+        this(context, null);
+    }
+
+    public RestoreProgressBarView(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        init(context);
+    }
+
+    private void init(Context context) {
         setOrientation(LinearLayout.VERTICAL);
         setBackgroundColor(0xFFFFFFFF);
+        setVisibility(View.GONE);
 
-        int pad = (int) (12 * getResources().getDisplayMetrics().density);
+        float density = getResources().getDisplayMetrics().density;
+        int pad = (int) (12 * density);
 
-        // Thin top divider spanning full width
-        View divider = new View(context);
-        divider.setBackgroundColor(0xFFE0E0E0);
-        addView(divider, new LinearLayout.LayoutParams(
+        // Thin top divider
+        View topDivider = new View(context);
+        topDivider.setBackgroundColor(0xFFE0E0E0);
+        addView(topDivider, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                (int) (1 * getResources().getDisplayMetrics().density)
+                (int) Math.max(1, density)
         ));
 
-        LinearLayout inner = new LinearLayout(context);
-        inner.setOrientation(LinearLayout.VERTICAL);
-        inner.setPadding(pad, pad, pad, pad);
-        addView(inner, new LinearLayout.LayoutParams(
+        // Inner container with 12dp padding
+        LinearLayout container = new LinearLayout(context);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(pad, pad, pad, pad);
+        addView(container, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
+        // File name (single line, ellipsis)
         tvFileName = new TextView(context);
         tvFileName.setTextSize(14);
         tvFileName.setTextColor(0xFF212121);
@@ -82,46 +96,49 @@ public class RestoreProgressBarView extends LinearLayout {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        nameLp.bottomMargin = (int) (6 * getResources().getDisplayMetrics().density);
-        inner.addView(tvFileName, nameLp);
+        nameLp.bottomMargin = (int) (6 * density);
+        container.addView(tvFileName, nameLp);
 
+        // Horizontal progress bar with percent text
         LinearLayout progressRow = new LinearLayout(context);
         progressRow.setOrientation(LinearLayout.HORIZONTAL);
         progressRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams prLp = new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        prLp.bottomMargin = (int) (6 * getResources().getDisplayMetrics().density);
-        inner.addView(progressRow, prLp);
+        rowLp.bottomMargin = (int) (6 * density);
+        container.addView(progressRow, rowLp);
 
         progressBar = new ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
         progressRow.addView(progressBar, new LinearLayout.LayoutParams(
                 0,
-                (int) (8 * getResources().getDisplayMetrics().density),
+                (int) (8 * density),
                 1.0f
         ));
 
         tvPercent = new TextView(context);
         tvPercent.setTextSize(13);
         tvPercent.setTextColor(0xFF1976D2);
-        tvPercent.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvPercent.setTypeface(null, Typeface.BOLD);
         LinearLayout.LayoutParams pctLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        pctLp.leftMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        pctLp.leftMargin = (int) (8 * density);
         progressRow.addView(tvPercent, pctLp);
 
+        // Files progress: "קבצים: X מתוך Y · נשארו Z"
         tvFilesProgress = new TextView(context);
         tvFilesProgress.setTextSize(12);
         tvFilesProgress.setTextColor(0xFF616161);
-        inner.addView(tvFilesProgress, new LinearLayout.LayoutParams(
+        container.addView(tvFilesProgress, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
+        // Bytes progress: "X.XX GB מתוך Y.YY GB"
         tvBytesProgress = new TextView(context);
         tvBytesProgress.setTextSize(12);
         tvBytesProgress.setTextColor(0xFF616161);
@@ -129,14 +146,15 @@ public class RestoreProgressBarView extends LinearLayout {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        bytesLp.topMargin = (int) (2 * getResources().getDisplayMetrics().density);
-        bytesLp.bottomMargin = (int) (6 * getResources().getDisplayMetrics().density);
-        inner.addView(tvBytesProgress, bytesLp);
+        bytesLp.topMargin = (int) (2 * density);
+        bytesLp.bottomMargin = (int) (6 * density);
+        container.addView(tvBytesProgress, bytesLp);
 
+        // Bottom row: ETA and Cancel button
         LinearLayout bottomRow = new LinearLayout(context);
         bottomRow.setOrientation(LinearLayout.HORIZONTAL);
         bottomRow.setGravity(Gravity.CENTER_VERTICAL);
-        inner.addView(bottomRow, new LinearLayout.LayoutParams(
+        container.addView(bottomRow, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
@@ -162,13 +180,11 @@ public class RestoreProgressBarView extends LinearLayout {
         });
         bottomRow.addView(btnCancel, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
-                (int) (36 * getResources().getDisplayMetrics().density)
+                (int) (36 * density)
         ));
-
-        setVisibility(View.GONE);
     }
 
-    private void updateState(int doneCount, int totalCount, int percent, long bytesDone, long bytesTotal, String fileName, long remainingSec) {
+    private void updateDisplay(int doneCount, int totalCount, int percent, long bytesDone, long bytesTotal, String fileName, long remainingSec) {
         tvFileName.setText(fileName != null && !fileName.trim().isEmpty() ? fileName : "מעבד קבצים...");
         progressBar.setProgress(percent);
         tvPercent.setText(percent + "%");
@@ -197,22 +213,25 @@ public class RestoreProgressBarView extends LinearLayout {
         filter.addAction(RestoreService.ACTION_PROGRESS);
         filter.addAction(RestoreService.ACTION_COMPLETED);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getContext().registerReceiver(restoreProgressReceiver, filter, Context.RECEIVER_EXPORTED);
+            getContext().registerReceiver(restoreReceiver, filter, Context.RECEIVER_EXPORTED);
         } else {
-            getContext().registerReceiver(restoreProgressReceiver, filter);
+            getContext().registerReceiver(restoreReceiver, filter);
         }
 
-        if (RestoreService.isRestoreRunning()) {
+        ServiceState state = ServiceState.getInstance();
+        if (state.getPhase() == ServiceState.Phase.RESTORING || RestoreService.isRestoreRunning()) {
             setVisibility(View.VISIBLE);
-            ServiceState state = ServiceState.getInstance();
             int done = state.getFilesCount();
-            int total = RestoreService.getTotalFilesCount();
+            int total = state.getTotalFiles() > 0 ? state.getTotalFiles() : RestoreService.getTotalFilesCount();
             int percent = state.getPercent();
-            long bytesDone = state.getTotalBytesScanned();
-            long bytesTotal = RestoreService.getTotalBytesCount();
-            String currentFile = RestoreService.getCurrentFileName();
-            long remainingSec = RestoreService.getCurrentRemainingSec();
-            updateState(done, total, percent, bytesDone, bytesTotal, currentFile, remainingSec);
+            long bytesDone = state.getTotalBytesScanned() > 0 ? state.getTotalBytesScanned() : RestoreService.getCurrentBytesRestored();
+            long bytesTotal = state.getTotalBytes() > 0 ? state.getTotalBytes() : RestoreService.getTotalBytesCount();
+            String currentFile = state.getCurrentFileName();
+            if (currentFile == null || currentFile.isEmpty()) {
+                currentFile = RestoreService.getCurrentFileName();
+            }
+            long remainingSec = state.getRemainingSec() > 0 ? state.getRemainingSec() : RestoreService.getCurrentRemainingSec();
+            updateDisplay(done, total, percent, bytesDone, bytesTotal, currentFile, remainingSec);
         } else {
             setVisibility(View.GONE);
         }
@@ -222,7 +241,7 @@ public class RestoreProgressBarView extends LinearLayout {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         try {
-            getContext().unregisterReceiver(restoreProgressReceiver);
+            getContext().unregisterReceiver(restoreReceiver);
         } catch (Exception ignored) {}
     }
 }
