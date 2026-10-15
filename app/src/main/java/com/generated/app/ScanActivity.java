@@ -36,6 +36,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
