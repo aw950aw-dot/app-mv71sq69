@@ -124,7 +124,7 @@ public class ScanActivity extends Activity {
                 } else if (ScanService.ACTION_COMPLETED.equals(action)) {
                     int count = intent.getIntExtra("count", 0);
                     updateScanCountersAndStatus(count, lastBroadcastFolders, "הסריקה הסתיימה");
-                    switchUiMode(2);
+                    decideScreen();
                 }
             } catch (Exception ignored) {}
         }
@@ -165,39 +165,49 @@ public class ScanActivity extends Activity {
             sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
             usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
 
-            new Thread(() -> {
-                currentParentId = dbHelper.getRootId();
-                int totalFiles = dbHelper.getTotalFilesCount();
-                int totalFolders = dbHelper.getTotalFoldersCount();
-                ServiceState state = ServiceState.getInstance();
-
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    scanStartTime = System.currentTimeMillis();
-                    buildAllUiScreens();
-
-                    if (state.getPhase() == ServiceState.Phase.RESTORING || RestoreService.isRestoreRunning()) {
-                        switchUiMode(1);
-                        tvScanStatus.setText("משחזר קבצים... (" + state.getPercent() + "%)");
-                    } else if (state.getPhase() == ServiceState.Phase.SCANNING || ScanService.isScanRunning()) {
-                        switchUiMode(1);
-                        lastBroadcastFiles = state.getFilesCount();
-                        lastBroadcastFolders = state.getFoldersCount();
-                        updateScanCountersAndStatus(lastBroadcastFiles, lastBroadcastFolders, state.getCurrentFolder());
-                    } else {
-                        if (totalFiles > 0 || totalFolders > 0 || state.getPhase() == ServiceState.Phase.SCAN_COMPLETED) {
-                            switchUiMode(2);
-                        } else {
-                            switchUiMode(1);
-                            tvScanStatus.setText("מתחבר לסריקה...");
-                            startScanService();
-                        }
-                    }
-                });
-            }).start();
+            scanStartTime = System.currentTimeMillis();
+            buildAllUiScreens();
+            decideScreen();
 
         } catch (Throwable t) {
             showExceptionDialog(t);
         }
+    }
+
+    private void decideScreen() {
+        new Thread(() -> {
+            try {
+                boolean isRunning = ScanService.isScanRunning() || RestoreService.isRestoreRunning();
+                int totalFiles = 0;
+                int totalFolders = 0;
+                if (dbHelper != null) {
+                    totalFiles = dbHelper.getTotalFilesCount();
+                    totalFolders = dbHelper.getTotalFoldersCount();
+                }
+
+                final int mode;
+                if (isRunning) {
+                    mode = 1; // Progress screen
+                } else if (totalFiles > 0 || totalFolders > 0) {
+                    mode = 2; // Results screen
+                } else {
+                    mode = 1; // Fallback / Home / Scan screen
+                }
+
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    switchUiMode(mode);
+                    if (mode == 1 && !isRunning && totalFiles == 0) {
+                        tvScanStatus.setText("מתחבר לסריקה...");
+                        startScanService();
+                    }
+                });
+            } catch (Throwable t) {
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    switchUiMode(1);
+                    tvScanStatus.setText("שגיאה בטעינה: " + t.getMessage());
+                });
+            }
+        }).start();
     }
 
     private void showExceptionDialog(Throwable t) {
@@ -248,7 +258,6 @@ public class ScanActivity extends Activity {
         thLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
         layoutScanScreen.addView(tvScanHeader, thLp);
 
-        // Add custom ScanAnimationView (~240dp x 160dp)
         int animWidth = (int) (240 * getResources().getDisplayMetrics().density);
         int animHeight = (int) (160 * getResources().getDisplayMetrics().density);
         scanAnimationView = new ScanAnimationView(this);
@@ -1003,8 +1012,7 @@ public class ScanActivity extends Activity {
             registerReceiver(scanReceiver, filter);
             registerReceiver(restoreReceiver, filter);
         }
-        if (currentUiMode == 3 && !isSearching) reloadCurrentDirectoryFromDb();
-        if (currentUiMode == 2) populateDashboardCategories();
+        decideScreen();
     }
 
     @Override
