@@ -790,9 +790,10 @@ public class ScanActivity extends Activity {
         browserLoadingProgress.setVisibility(View.VISIBLE);
         new Thread(() -> {
             final List<RecoveredEntry> results = dbHelper.searchNodes(query);
+            final List<RecoveredEntry> limitedResults = results.size() > 200 ? results.subList(0, 200) : results;
             new Handler(Looper.getMainLooper()).post(() -> {
                 browserLoadingProgress.setVisibility(View.GONE);
-                searchResults = results;
+                searchResults = limitedResults;
                 currentDirEntries = searchResults;
                 browserAdapter.notifyDataSetChanged();
             });
