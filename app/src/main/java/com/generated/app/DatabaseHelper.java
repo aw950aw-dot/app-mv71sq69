@@ -539,16 +539,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return 1L;
     }
 
-    public synchronized List<RecoveredEntry> getChildrenOfDirectory(long parentId) {
-        return getChildrenOfDirectoryPaged(parentId, 0, 100);
-    }
-
-    public synchronized List<RecoveredEntry> getChildrenOfDirectoryPaged(long parentId, long lastId, int limit) {
+    public synchronized List<RecoveredEntry> getChildrenOfDirectory(long parentId, int limit, int offset) {
         long start = System.currentTimeMillis();
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         
-        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? AND " + COL_ID + " > ? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " ASC LIMIT " + limit, new String[]{String.valueOf(parentId), String.valueOf(lastId)});
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? ORDER BY " + COL_IS_DIR + " DESC, " + COL_NAME + " COLLATE NOCASE LIMIT ? OFFSET ?", new String[]{String.valueOf(parentId), String.valueOf(limit), String.valueOf(offset)});
         
         if (c != null) {
             while (c.moveToNext()) {
@@ -556,7 +552,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 long pId = c.getLong(1);
                 String name = c.getString(2);
                 String path = c.getString(3);
-                long offset = c.getLong(4);
+                long offsetVal = c.getLong(4);
                 long size = c.getLong(5);
                 String typeStr = c.getString(6);
                 boolean isDir = c.getInt(7) == 1;
@@ -569,14 +565,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 int restoreStatus = c.getInt(14);
                 String category = c.getString(15);
                 int fileCount = c.getInt(16);
-                long totalSize = c.getLong(17);
+                long totalSize = c.getInt(17);
 
                 FileType type = FileType.UNKNOWN;
                 try {
                     type = FileType.valueOf(typeStr);
                 } catch (Exception ignored) {}
 
-                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offset, size, type, false, isDir, modified, rawName, firstCluster);
+                RecoveredEntry entry = new RecoveredEntry(id, pId, name, path, offsetVal, size, type, false, isDir, modified, rawName, firstCluster);
                 entry.setSelectedState(selectedState);
                 entry.setUnreadable(isUnreadable);
                 entry.setUnreadableReason(unreadableReason);
@@ -589,7 +585,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             c.close();
         }
-        PerformanceLogger.record("getChildrenOfDirectoryPaged", System.currentTimeMillis() - start);
+        PerformanceLogger.record("getChildrenOfDirectory", System.currentTimeMillis() - start);
         return list;
     }
 

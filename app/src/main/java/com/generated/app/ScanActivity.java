@@ -21,6 +21,7 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -104,6 +105,11 @@ public class ScanActivity extends Activity {
     private int lastBroadcastFolders = 0;
 
     private boolean saveAllModeFlag = false;
+
+    private int currentOffset = 0;
+    private boolean isLoadingMore = false;
+    private boolean hasMoreData = true;
+    private static final int PAGE_SIZE = 200;
 
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private Runnable searchRunnable;
@@ -608,7 +614,10 @@ public class ScanActivity extends Activity {
             new Thread(() -> {
                 currentParentId = dbHelper.getRootId();
                 currentDirPath = "/";
-                reloadCurrentDirectoryFromDb();
+                currentOffset = 0;
+                hasMoreData = true;
+                currentDirEntries.clear();
+                loadInitialDirectoryPage();
             }).start();
         });
 
@@ -704,6 +713,20 @@ public class ScanActivity extends Activity {
         browserAdapter = new TreeEntryAdapter();
         listViewBrowser.setAdapter(browserAdapter);
 
+        listViewBrowser.setOnScrollListener(new AbsListView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(AbsListView view, int scrollState) {}
+
+            @Override
+            public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount, int totalItemCount) {
+                if (!isSearching && hasMoreData && !isLoadingMore && totalItemCount > 0) {
+                    if ((firstVisibleItem + visibleItemCount) >= (totalItemCount - 20)) {
+                        loadMoreDirectoryPage();
+                    }
+                }
+            }
+        });
+
         bottomBarRestore = new LinearLayout(this);
         bottomBarRestore.setOrientation(LinearLayout.HORIZONTAL);
         bottomBarRestore.setGravity(Gravity.CENTER_VERTICAL);
@@ -731,7 +754,10 @@ public class ScanActivity extends Activity {
             new Thread(() -> {
                 dbHelper.setAllSelected(true);
                 updateSelectionCounterAndBottomBar();
-                reloadCurrentDirectoryFromDb();
+                currentOffset = 0;
+                hasMoreData = true;
+                currentDirEntries.clear();
+                loadInitialDirectoryPage();
             }).start();
         });
 
@@ -740,7 +766,10 @@ public class ScanActivity extends Activity {
             new Thread(() -> {
                 dbHelper.setAllSelected(false);
                 updateSelectionCounterAndBottomBar();
-                reloadCurrentDirectoryFromDb();
+                currentOffset = 0;
+                hasMoreData = true;
+                currentDirEntries.clear();
+                loadInitialDirectoryPage();
             }).start();
         });
 
@@ -889,7 +918,10 @@ public class ScanActivity extends Activity {
     private void performSearch(final String query) {
         if (query == null || query.trim().isEmpty()) {
             isSearching = false;
-            reloadCurrentDirectoryFromDb();
+            currentOffset = 0;
+            hasMoreData = true;
+            currentDirEntries.clear();
+            loadInitialDirectoryPage();
             return;
         }
 
@@ -927,16 +959,56 @@ public class ScanActivity extends Activity {
         }).start();
     }
 
-    private void reloadCurrentDirectoryFromDb() {
+    private void loadInitialDirectoryPage() {
         if (isSearching) return;
         runOnUiThread(() -> {
             if (browserLoadingProgress != null) browserLoadingProgress.setVisibility(View.VISIBLE);
         });
+        currentOffset = 0;
+        hasMoreData = true;
         new Thread(() -> {
-            final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId);
+            final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId, PAGE_SIZE, currentOffset);
+            currentOffset += list.size();
+            if (list.size() < PAGE_SIZE) {
+                hasMoreData = false;
+            }
             runOnUiThread(() -> {
                 if (browserLoadingProgress != null) browserLoadingProgress.setVisibility(View.GONE);
-                currentDirEntries = list;
+                currentDirEntries.clear();
+                currentDirEntries.addAll(list);
+                updateBreadcrumbBar();
+                updateSelectionCounterAndBottomBar();
+                if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
+            });
+        }).start();
+    }
+
+    private void loadMoreDirectoryPage() {
+        if (isSearching || isLoadingMore || !hasMoreData) return;
+        isLoadingMore = true;
+        new Thread(() -> {
+            final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId, PAGE_SIZE, currentOffset);
+            currentOffset += list.size();
+            if (list.size() < PAGE_SIZE) {
+                hasMoreData = false;
+            }
+            runOnUiThread(() -> {
+                isLoadingMore = false;
+                if (!list.isEmpty()) {
+                    currentDirEntries.addAll(list);
+                    if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
+                }
+            });
+        }).start();
+    }
+
+    private void reloadCurrentDirectoryFromDb() {
+        if (isSearching) return;
+        new Thread(() -> {
+            final List<RecoveredEntry> list = dbHelper.getChildrenOfDirectory(currentParentId, Math.max(PAGE_SIZE, currentOffset), 0);
+            runOnUiThread(() -> {
+                currentDirEntries.clear();
+                currentDirEntries.addAll(list);
                 updateBreadcrumbBar();
                 updateSelectionCounterAndBottomBar();
                 if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
@@ -962,7 +1034,7 @@ public class ScanActivity extends Activity {
                 currentParentId = dbHelper.getRootId();
                 runOnUiThread(() -> {
                     updateBreadcrumbBar();
-                    reloadCurrentDirectoryFromDb();
+                    loadInitialDirectoryPage();
                 });
             }).start();
         });
@@ -1000,7 +1072,7 @@ public class ScanActivity extends Activity {
                             currentParentId = foundId;
                         }
                         updateBreadcrumbBar();
-                        reloadCurrentDirectoryFromDb();
+                        loadInitialDirectoryPage();
                     });
                 }).start();
             });
@@ -1014,7 +1086,7 @@ public class ScanActivity extends Activity {
             if (isSearching) {
                 isSearching = false;
                 etSearchBrowser.setText("");
-                reloadCurrentDirectoryFromDb();
+                loadInitialDirectoryPage();
                 return;
             }
             if (!currentDirPath.equals("/")) {
@@ -1029,7 +1101,7 @@ public class ScanActivity extends Activity {
                         currentParentId = dbHelper.getRootId();
                         runOnUiThread(() -> {
                             updateBreadcrumbBar();
-                            reloadCurrentDirectoryFromDb();
+                            loadInitialDirectoryPage();
                         });
                     }).start();
                 } else {
@@ -1043,7 +1115,7 @@ public class ScanActivity extends Activity {
                             if (pid != -1) currentParentId = pid;
                             else currentParentId = rootId;
                             updateBreadcrumbBar();
-                            reloadCurrentDirectoryFromDb();
+                            loadInitialDirectoryPage();
                         });
                     }).start();
                 }
@@ -1339,8 +1411,11 @@ public class ScanActivity extends Activity {
                     etSearchBrowser.setText("");
                     currentParentId = entry.getId();
                     currentDirPath = currentDirPath.equals("/") ? "/" + entry.getName() : currentDirPath + "/" + entry.getName();
+                    currentOffset = 0;
+                    hasMoreData = true;
+                    currentDirEntries.clear();
                     updateBreadcrumbBar();
-                    reloadCurrentDirectoryFromDb();
+                    loadInitialDirectoryPage();
                 } else {
                     showRawBytesHexDialog(entry);
                 }
