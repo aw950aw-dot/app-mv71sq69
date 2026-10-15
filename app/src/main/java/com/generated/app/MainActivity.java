@@ -495,7 +495,7 @@ public class MainActivity extends Activity {
                                             finish();
                                         } else {
                                             Toast.makeText(MainActivity.this, "לא נמצאה תיקיית יעד לשחזור", Toast.LENGTH_SHORT).show();
-                                            new Thread(() -> dbHelper.clearRestoreQueue()).start();
+                                            new Thread(() -> dbHelper.discardRestore()).start();
                                             recreate();
                                         }
                                     }
@@ -505,7 +505,7 @@ public class MainActivity extends Activity {
                         .setNegativeButton("Discard", new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
-                                new Thread(() -> DatabaseHelper.getInstance(MainActivity.this).clearRestoreQueue()).start();
+                                new Thread(() -> DatabaseHelper.getInstance(MainActivity.this).discardRestore()).start();
                                 recreate();
                             }
                         })

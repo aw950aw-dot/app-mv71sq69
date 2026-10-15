@@ -168,7 +168,7 @@ public class RestoreService extends Service {
                     DiagnosticReporter.logError(e, "RestoreService failed to open source");
                     String errMsg = "שגיאה בפתיחת מקור הקריאה לשחזור: " + e.getMessage();
                     isRestoreRunning = false;
-                    dbHelper.updateJobState("restore", "INTERRUPTED", System.currentTimeMillis(), System.currentTimeMillis(), 0, restoredFilesCount, currentBytesRestored);
+                    dbHelper.updateJobState("restore", "FAILED", System.currentTimeMillis(), System.currentTimeMillis(), 0, restoredFilesCount, currentBytesRestored);
                     updateNotification(errMsg, 0, "שחזור נכשל");
                     ServiceState.getInstance().update(ServiceState.Phase.IDLE, restoredFilesCount, 0, currentBytesRestored, "", 0, "", errMsg);
                     List<String> errs = new ArrayList<>();

@@ -42,7 +42,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     public static final String TABLE_JOB_STATE = "job_state";
     public static final String COL_JOB_TYPE = "job_type"; // "scan" or "restore"
-    public static final String COL_JOB_PHASE = "phase"; // "RUNNING", "COMPLETED", "INTERRUPTED", "CANCELLED"
+    public static final String COL_JOB_PHASE = "phase"; // "RUNNING", "COMPLETED", "INTERRUPTED", "CANCELLED", "FAILED", "DISCARDED"
     public static final String COL_JOB_STARTED_AT = "started_at";
     public static final String COL_JOB_HEARTBEAT = "last_heartbeat";
     public static final String COL_JOB_FOLDERS = "folders";
@@ -512,6 +512,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public synchronized boolean hasUnfinishedRestore() {
         long start = System.currentTimeMillis();
         try {
+            String phase = getJobPhase("restore");
+            if (!"INTERRUPTED".equalsIgnoreCase(phase)) {
+                return false;
+            }
             SQLiteDatabase db = getReadableDatabase();
             Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_NODES + " WHERE " + COL_IS_DIR + "=0 AND " + COL_SELECTED + "=1 AND " + COL_RESTORE_STATUS + "!=1", null);
             if (c != null) {
@@ -537,6 +541,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             PerformanceLogger.record("hasUnfinishedRestore", System.currentTimeMillis() - start);
         }
         return false;
+    }
+
+    public synchronized void discardRestore() {
+        long start = System.currentTimeMillis();
+        try {
+            SQLiteDatabase db = getWritableDatabase();
+            db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=0, " + COL_RESTORE_STATUS + "=0");
+            long now = System.currentTimeMillis();
+            updateJobState("restore", "DISCARDED", now, now, 0, 0, 0);
+        } catch (Exception ignored) {}
+        finally {
+            PerformanceLogger.record("discardRestore", System.currentTimeMillis() - start);
+        }
     }
 
     public synchronized int[] getRestoreQueueStats() {
