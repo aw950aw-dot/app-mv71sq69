@@ -190,7 +190,7 @@ public class ScanActivity extends Activity {
         Log.d("Lifecycle", "ScanActivity onNewIntent. Screen chosen: Scan/Progress or Results Screen");
         setIntent(intent);
         sourceUri = intent.getParcelableExtra(EXTRA_URI);
-        usbDeviceName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
+        usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
         decideScreen();
     }
 
@@ -288,7 +288,7 @@ public class ScanActivity extends Activity {
         int pad = (int) (20 * getResources().getDisplayMetrics().density);
         layoutScanScreen.setPadding(pad, pad, pad, pad);
         root.addView(layoutScanScreen, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
         TextView tvScanHeader = new TextView(this);
         tvScanHeader.setText("סריקת כרטיס זיכרון");
@@ -470,7 +470,7 @@ public class ScanActivity extends Activity {
         layoutResultsDashboard = new LinearLayout(this);
         layoutResultsDashboard.setOrientation(LinearLayout.VERTICAL);
         layoutResultsDashboard.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
         layoutResultsDashboard.setBackgroundColor(0xFFF8F9FA);
         layoutResultsDashboard.setVisibility(View.GONE);
         root.addView(layoutResultsDashboard);
@@ -625,7 +625,7 @@ public class ScanActivity extends Activity {
         layoutFolderBrowser = new LinearLayout(this);
         layoutFolderBrowser.setOrientation(LinearLayout.VERTICAL);
         layoutFolderBrowser.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
         layoutFolderBrowser.setBackgroundColor(0xFFF8F9FA);
         layoutFolderBrowser.setVisibility(View.GONE);
         root.addView(layoutFolderBrowser);
@@ -774,6 +774,13 @@ public class ScanActivity extends Activity {
         });
 
         btnExecuteRestore.setOnClickListener(v -> promptForSaveDirectory(false));
+
+        // Add RestoreProgressBarView at the bottom of the root layout
+        RestoreProgressBarView restoreProgressBarView = new RestoreProgressBarView(this);
+        root.addView(restoreProgressBarView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
 
         setContentView(root);
     }

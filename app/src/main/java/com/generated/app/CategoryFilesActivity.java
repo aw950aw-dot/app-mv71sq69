@@ -226,6 +226,13 @@ public class CategoryFilesActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
+        // Add RestoreProgressBarView at the bottom of root layout
+        RestoreProgressBarView restoreProgressBarView = new RestoreProgressBarView(this);
+        root.addView(restoreProgressBarView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
         TextWatcher filterWatcher = new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -392,7 +399,6 @@ public class CategoryFilesActivity extends Activity {
 
             new Handler(Looper.getMainLooper()).post(() -> {
                 Toast.makeText(CategoryFilesActivity.this, "השחזור החל ברקע עבור קבצי הקטגוריה", Toast.LENGTH_LONG).show();
-                finish();
             });
         }).start();
     }
