@@ -58,6 +58,7 @@ public class RestoreService extends Service {
     private static String currentFileName = "";
     private static int currentPercent = 0;
     private static String currentEtaText = "מחשב זמן נותר...";
+    private static long currentRemainingSec = 0;
     private static final Map<String, Integer> failureCausesMap = new HashMap<>();
 
     public static boolean isRestoreRunning() {
@@ -492,6 +493,7 @@ public class RestoreService extends Service {
 
                     long remainingBytes = totalBytesCount - currentBytesRestored;
                     long remainingSec = bytesPerSec > 1024 ? (long) (remainingBytes / bytesPerSec) : 0;
+                    currentRemainingSec = remainingSec;
                     long remainingMin = Math.max(1, remainingSec / 60);
 
                     currentEtaText = String.format(Locale.getDefault(), "קבצים %d מתוך %d · %.2f GB מתוך %.2f GB · נשארו כ-%d דקות",
@@ -648,6 +650,10 @@ public class RestoreService extends Service {
         intent.putExtra("total", totalFilesCount);
         intent.putExtra("percent", currentPercent);
         intent.putExtra("eta", currentEtaText);
+        intent.putExtra("bytes_done", currentBytesRestored);
+        intent.putExtra("bytes_total", totalBytesCount);
+        intent.putExtra("current_file", currentFileName);
+        intent.putExtra("remaining_sec", currentRemainingSec);
         sendBroadcast(intent);
     }
 

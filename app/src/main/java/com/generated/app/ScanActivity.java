@@ -216,7 +216,7 @@ public class ScanActivity extends Activity {
     private void decideScreen() {
         new Thread(() -> {
             try {
-                boolean isRunning = ScanService.isScanRunning() || RestoreService.isRestoreRunning();
+                boolean isRunning = ScanService.isScanRunning();
                 int totalFiles = 0;
                 int totalFolders = 0;
                 if (dbHelper != null) {
