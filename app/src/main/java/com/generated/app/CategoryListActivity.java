@@ -2,28 +2,30 @@ package com.generated.app;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.BaseAdapter;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 public class CategoryListActivity extends Activity {
 
+    public static final String EXTRA_URI = "extra_uri";
+    public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
+
     private DatabaseHelper dbHelper;
     private ListView listView;
     private CategoryAdapter adapter;
     private final List<CategoryItem> categoryItems = new ArrayList<>();
+    private Uri sourceUri;
+    private String usbDeviceName;
 
     public static class CategoryItem {
         public final String categoryKey;
@@ -45,6 +47,8 @@ public class CategoryListActivity extends Activity {
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         dbHelper = DatabaseHelper.getInstance(this);
+        sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
+        usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -77,15 +81,14 @@ public class CategoryListActivity extends Activity {
         adapter = new CategoryAdapter();
         listView.setAdapter(adapter);
 
-        listView.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
-            @Override
-            public void onItemClick(android.widget.AdapterView<?> parent, View view, int position, long id) {
-                CategoryItem item = categoryItems.get(position);
-                Intent intent = new Intent(CategoryListActivity.this, CategoryFilesActivity.class);
-                intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_KEY, item.categoryKey);
-                intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_NAME, item.displayName);
-                startActivity(intent);
-            }
+        listView.setOnItemClickListener((parent, view, position, id) -> {
+            CategoryItem item = categoryItems.get(position);
+            Intent intent = new Intent(CategoryListActivity.this, CategoryFilesActivity.class);
+            intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_KEY, item.categoryKey);
+            intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_NAME, item.displayName);
+            if (sourceUri != null) intent.putExtra(CategoryFilesActivity.EXTRA_URI, sourceUri);
+            if (usbDeviceName != null) intent.putExtra(CategoryFilesActivity.EXTRA_USB_DEVICE_NAME, usbDeviceName);
+            startActivity(intent);
         });
 
         loadCategories();

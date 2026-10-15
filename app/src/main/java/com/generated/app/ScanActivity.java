@@ -6,12 +6,9 @@ import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -169,7 +166,6 @@ public class ScanActivity extends Activity {
             scanStartTime = System.currentTimeMillis();
             buildAllUiScreens();
 
-            // Read service state immediately on startup/reopen
             ServiceState state = ServiceState.getInstance();
             if (state.getPhase() == ServiceState.Phase.RESTORING || RestoreService.isRestoreRunning()) {
                 switchUiMode(1);
@@ -732,6 +728,8 @@ public class ScanActivity extends Activity {
             Intent intent = new Intent(ScanActivity.this, CategoryFilesActivity.class);
             intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_KEY, cat.key);
             intent.putExtra(CategoryFilesActivity.EXTRA_CATEGORY_NAME, cat.name);
+            if (sourceUri != null) intent.putExtra(CategoryFilesActivity.EXTRA_URI, sourceUri);
+            if (usbDeviceName != null) intent.putExtra(CategoryFilesActivity.EXTRA_USB_DEVICE_NAME, usbDeviceName);
             startActivity(intent);
         });
 
@@ -985,16 +983,7 @@ public class ScanActivity extends Activity {
 
     private void startRestoreService(Uri treeUri, boolean saveAll) {
         Toast.makeText(this, "מתחיל שחזור קבצים ברקע...", Toast.LENGTH_SHORT).show();
-        Intent intent = new Intent(this, RestoreService.class);
-        intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
-        intent.putExtra(RestoreService.EXTRA_SAVE_ALL, saveAll);
-        if (sourceUri != null) intent.putExtra(RestoreService.EXTRA_URI, sourceUri);
-        if (usbDeviceName != null) intent.putExtra(RestoreService.EXTRA_USB_DEVICE_NAME, usbDeviceName);
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForegroundService(intent);
-        } else {
-            startService(intent);
-        }
+        RestoreUtils.startRestoreService(this, treeUri, saveAll, sourceUri, usbDeviceName);
     }
 
     private void showScanDetailsDialog() {

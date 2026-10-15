@@ -25,8 +25,6 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -35,11 +33,16 @@ public class CategoryFilesActivity extends Activity {
 
     public static final String EXTRA_CATEGORY_KEY = "extra_category_key";
     public static final String EXTRA_CATEGORY_NAME = "extra_category_name";
+    public static final String EXTRA_URI = "extra_uri";
+    public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
+
     private static final int REQUEST_CODE_SAVE_DIR = 4004;
     private static final String PREF_DEST_URI = "pref_dest_uri";
 
     private String categoryKey;
     private String categoryDisplayName;
+    private Uri sourceUri;
+    private String usbDeviceName;
     private DatabaseHelper dbHelper;
 
     private EditText etSearch;
@@ -66,6 +69,8 @@ public class CategoryFilesActivity extends Activity {
         dbHelper = DatabaseHelper.getInstance(this);
         categoryKey = getIntent().getStringExtra(EXTRA_CATEGORY_KEY);
         categoryDisplayName = getIntent().getStringExtra(EXTRA_CATEGORY_NAME);
+        sourceUri = getIntent().getParcelableExtra(EXTRA_URI);
+        usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
 
         if (categoryKey == null) {
             finish();
@@ -215,12 +220,7 @@ public class CategoryFilesActivity extends Activity {
                 if (searchRunnable != null) {
                     searchHandler.removeCallbacks(searchRunnable);
                 }
-                searchRunnable = new Runnable() {
-                    @Override
-                    public void run() {
-                        applyFilterAndSearch();
-                    }
-                };
+                searchRunnable = () -> applyFilterAndSearch();
                 searchHandler.postDelayed(searchRunnable, 300);
             }
 
@@ -231,58 +231,39 @@ public class CategoryFilesActivity extends Activity {
         etSearch.addTextChangedListener(filterWatcher);
         etMinSizeKb.addTextChangedListener(filterWatcher);
 
-        btnSelectAll.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                for (RecoveredEntry e : filteredEntries) {
-                    e.setSelectedState(1);
-                }
-                updateSelectionCounter();
-                adapter.notifyDataSetChanged();
+        btnSelectAll.setOnClickListener(v -> {
+            for (RecoveredEntry e : filteredEntries) {
+                e.setSelectedState(1);
             }
+            updateSelectionCounter();
+            adapter.notifyDataSetChanged();
         });
 
-        btnClearSelection.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                for (RecoveredEntry e : filteredEntries) {
-                    e.setSelectedState(0);
-                }
-                updateSelectionCounter();
-                adapter.notifyDataSetChanged();
+        btnClearSelection.setOnClickListener(v -> {
+            for (RecoveredEntry e : filteredEntries) {
+                e.setSelectedState(0);
             }
+            updateSelectionCounter();
+            adapter.notifyDataSetChanged();
         });
 
-        btnRestoreCategory.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                promptRestoreOptions();
-            }
-        });
+        btnRestoreCategory.setOnClickListener(v -> promptRestoreOptions());
 
         setContentView(root);
         loadEntries();
     }
 
     private void loadEntries() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                List<RecoveredEntry> all = dbHelper.getAllEntriesForSaveAll();
-                List<RecoveredEntry> matched = new ArrayList<>();
-                for (RecoveredEntry e : all) {
-                    if (!e.isDirectory() && categoryKey.equals(e.getCategory())) {
-                        matched.add(e);
-                    }
+        new Thread(() -> {
+            List<RecoveredEntry> all = dbHelper.getAllEntriesForSaveAll();
+            List<RecoveredEntry> matched = new ArrayList<>();
+            for (RecoveredEntry e : all) {
+                if (!e.isDirectory() && categoryKey.equals(e.getCategory())) {
+                    matched.add(e);
                 }
-                allCategoryEntries = matched;
-                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                    @Override
-                    public void run() {
-                        applyFilterAndSearch();
-                    }
-                });
             }
+            allCategoryEntries = matched;
+            new Handler(Looper.getMainLooper()).post(this::applyFilterAndSearch);
         }).start();
     }
 
@@ -301,7 +282,6 @@ public class CategoryFilesActivity extends Activity {
             temp.add(e);
         }
 
-        // Sort by name
         temp.sort((o1, o2) -> o1.getName().compareToIgnoreCase(o2.getName()));
 
         filteredEntries = temp;
@@ -334,19 +314,13 @@ public class CategoryFilesActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("אופן שמירת הקבצים")
                 .setMessage("כיצד תרצה לשמור את הקבצים המשוחזרים?")
-                .setPositiveButton("שמור בתיקיות המקוריות", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        keepOriginalFolders = true;
-                        openDirectoryPicker();
-                    }
+                .setPositiveButton("שמור בתיקיות המקוריות", (dialog, which) -> {
+                    keepOriginalFolders = true;
+                    openDirectoryPicker();
                 })
-                .setNegativeButton("שם הכל בתיקייה אחת", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        keepOriginalFolders = false;
-                        openDirectoryPicker();
-                    }
+                .setNegativeButton("שם הכל בתיקייה אחת", (dialog, which) -> {
+                    keepOriginalFolders = false;
+                    openDirectoryPicker();
                 })
                 .show();
     }
@@ -399,80 +373,18 @@ public class CategoryFilesActivity extends Activity {
 
         Toast.makeText(this, "מתחיל שחזור קבצים מהקטגוריה...", Toast.LENGTH_SHORT).show();
 
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                ContentResolver resolver = getContentResolver();
-                DocumentFileCompat rootDir = DocumentFileCompat.fromTreeUri(CategoryFilesActivity.class.cast(CategoryFilesActivity.this), treeUri);
-                if (rootDir == null || !rootDir.canWrite()) {
-                    new Handler(Looper.getMainLooper()).post(new Runnable() {
-                        @Override
-                        public void run() {
-                            Toast.makeText(CategoryFilesActivity.this, "תקיית היעד אינה נגישה לכתיבה", Toast.LENGTH_SHORT).show();
-                        }
-                    });
-                    return;
-                }
-
-                DocumentFileCompat targetDir = rootDir;
-                if (!keepOriginalFolders) {
-                    String subFolderName = "Restored_" + categoryKey + "_" + System.currentTimeMillis();
-                    DocumentFileCompat created = rootDir.createDirectory(subFolderName);
-                    if (created != null) {
-                        targetDir = created;
-                    }
-                }
-
-                int success = 0;
-                int failed = 0;
-                int skipped = 0;
-
-                // Open source from intent or default image file if available
-                ByteSource source = null;
-                try {
-                    // Try to find source image or USB
-                    // For category files restore, we use database offset and length with FileImageSource if content uri is stored, or fallback to any image source
-                    // Here we check last saved scan source or app files
-                    // We can attempt to open via persistent URI if available or let user pick. Alternatively scan source uri can be obtained.
-                    // To ensure robustness, we can try opening content resolver if available.
-                    SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-                    // If we stored a source uri or we can scan database nodes
-                } catch (Exception ignored) {}
-
-                // We can use the active source or read via FileImageSource if uri is saved
-                // Let's implement robust file saving using database offsets
-                for (RecoveredEntry entry : filesToRestore) {
-                    try {
-                        // Find active source byte source
-                        // If byte source is not directly accessible here, we open it from the saved image URI if present
-                    } catch (Exception ignored) {}
-                }
-
-                // Actually, let's delegate to RestoreService or execute directly with a ByteSource
-                // Since RestoreService processes DB selection states, we can set selected state ONLY for these files in DB,
-                // clear others, and start RestoreService!
-                dbHelper.setAllSelected(false);
-                for (RecoveredEntry e : filesToRestore) {
-                    dbHelper.setNodeAndSubtreeSelected(e, 1);
-                }
-
-                Intent intent = new Intent(CategoryFilesActivity.this, RestoreService.class);
-                intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
-                intent.putExtra(RestoreService.EXTRA_SAVE_ALL, false);
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    startForegroundService(intent);
-                } else {
-                    startService(intent);
-                }
-
-                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                    @Override
-                    public void run() {
-                        Toast.makeText(CategoryFilesActivity.this, "השחזור החל ברקע עבור קבצי הקטגוריה", Toast.LENGTH_LONG).show();
-                        finish();
-                    }
-                });
+        new Thread(() -> {
+            dbHelper.setAllSelected(false);
+            for (RecoveredEntry e : filesToRestore) {
+                dbHelper.setNodeAndSubtreeSelected(e, 1);
             }
+
+            RestoreUtils.startRestoreService(CategoryFilesActivity.this, treeUri, false, sourceUri, usbDeviceName);
+
+            new Handler(Looper.getMainLooper()).post(() -> {
+                Toast.makeText(CategoryFilesActivity.this, "השחזור החל ברקע עבור קבצי הקטגוריה", Toast.LENGTH_LONG).show();
+                finish();
+            });
         }).start();
     }
 
@@ -544,22 +456,16 @@ public class CategoryFilesActivity extends Activity {
             holder.tvName.setText(entry.getName());
             holder.tvSubtitle.setText(String.format(Locale.getDefault(), "נתיב: %s • גודל: %s", entry.getPath(), formatSize(entry.getLength())));
 
-            holder.checkBox.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    entry.setSelectedState(holder.checkBox.isChecked() ? 1 : 0);
-                    updateSelectionCounter();
-                }
+            holder.checkBox.setOnClickListener(v -> {
+                entry.setSelectedState(holder.checkBox.isChecked() ? 1 : 0);
+                updateSelectionCounter();
             });
 
-            itemLayout.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    boolean newState = !entry.isSelected();
-                    entry.setSelectedState(newState ? 1 : 0);
-                    holder.checkBox.setChecked(newState);
-                    updateSelectionCounter();
-                }
+            itemLayout.setOnClickListener(v -> {
+                boolean newState = !entry.isSelected();
+                entry.setSelectedState(newState ? 1 : 0);
+                holder.checkBox.setChecked(newState);
+                updateSelectionCounter();
             });
 
             return itemLayout;
