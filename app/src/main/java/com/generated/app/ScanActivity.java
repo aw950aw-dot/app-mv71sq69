@@ -186,17 +186,21 @@ public class ScanActivity extends Activity {
                 }
 
                 final int mode;
+                final boolean shouldStartScan;
                 if (isRunning) {
                     mode = 1; // Progress screen
+                    shouldStartScan = false;
                 } else if (totalFiles > 0 || totalFolders > 0) {
                     mode = 2; // Results screen
+                    shouldStartScan = false;
                 } else {
-                    mode = 1; // Fallback / Home / Scan screen
+                    mode = 1; // Home screen
+                    shouldStartScan = true;
                 }
 
                 new Handler(Looper.getMainLooper()).post(() -> {
                     switchUiMode(mode);
-                    if (mode == 1 && !isRunning && totalFiles == 0) {
+                    if (shouldStartScan) {
                         tvScanStatus.setText("מתחבר לסריקה...");
                         startScanService();
                     }
@@ -204,7 +208,7 @@ public class ScanActivity extends Activity {
             } catch (Throwable t) {
                 new Handler(Looper.getMainLooper()).post(() -> {
                     switchUiMode(1);
-                    tvScanStatus.setText("שגיאה בטעינה: " + t.getMessage());
+                    tvScanStatus.setText("שגיאה: " + (t.getMessage() != null ? t.getMessage() : "unknown"));
                 });
             }
         }).start();
