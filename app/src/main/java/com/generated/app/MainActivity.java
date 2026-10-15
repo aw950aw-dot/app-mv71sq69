@@ -56,6 +56,8 @@ public class MainActivity extends Activity {
     private Uri currentUri;
     private UsbDevice currentUsbDevice;
 
+    private static boolean unfinishedRestoreDialogShownThisLaunch = false;
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private final BroadcastReceiver detachReceiver = new BroadcastReceiver() {
@@ -464,6 +466,14 @@ public class MainActivity extends Activity {
     }
 
     private void showUnfinishedRestoreDialog() {
+        if (unfinishedRestoreDialogShownThisLaunch) {
+            return;
+        }
+        if (ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
+            return;
+        }
+        unfinishedRestoreDialogShownThisLaunch = true;
+
         new Thread(() -> {
             DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
             int[] stats = dbHelper.getRestoreQueueStats();
@@ -473,12 +483,17 @@ public class MainActivity extends Activity {
                 new AlertDialog.Builder(this)
                         .setTitle("שחזור לא הושלם")
                         .setMessage("נמצא שחזור קודם שלא הושלם: " + done + " מתוך " + total + " קבצים בוצעו.")
-                        .setPositiveButton("Resume", new DialogInterface.OnClickListener() {
+                        .setPositiveButton("המשך שחזור", new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
                                 checkAndShowBatteryOptimizationDialog(new Runnable() {
                                     @Override
                                     public void run() {
+                                        if (currentUsbDevice == null && currentUri == null) {
+                                            Toast.makeText(MainActivity.this, "חבר את קורא הכרטיסים", Toast.LENGTH_SHORT).show();
+                                            return;
+                                        }
+
                                         SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
                                         String destUriStr = prefs.getString(PREF_DEST_URI, null);
                                         if (destUriStr != null) {
@@ -486,6 +501,12 @@ public class MainActivity extends Activity {
                                             Intent intent = new Intent(MainActivity.this, RestoreService.class);
                                             intent.putExtra(RestoreService.EXTRA_TREE_URI, treeUri);
                                             intent.putExtra(RestoreService.EXTRA_RESUME, true);
+                                            if (currentUsbDevice != null) {
+                                                intent.putExtra(RestoreService.EXTRA_USB_DEVICE_NAME, currentUsbDevice.getDeviceName());
+                                            } else if (currentUri != null) {
+                                                intent.putExtra(RestoreService.EXTRA_URI, currentUri);
+                                            }
+
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                                 startForegroundService(intent);
                                             } else {
@@ -502,11 +523,16 @@ public class MainActivity extends Activity {
                                 });
                             }
                         })
-                        .setNegativeButton("Discard", new DialogInterface.OnClickListener() {
+                        .setNegativeButton("בטל שחזור", new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
-                                new Thread(() -> DatabaseHelper.getInstance(MainActivity.this).discardRestore()).start();
-                                recreate();
+                                new Thread(() -> {
+                                    DatabaseHelper.getInstance(MainActivity.this).discardRestore();
+                                    mainHandler.post(() -> {
+                                        updateUIState();
+                                        checkSavedScanStateOffMainThread();
+                                    });
+                                }).start();
                             }
                         })
                         .setCancelable(false)
