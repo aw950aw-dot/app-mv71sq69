@@ -2,9 +2,11 @@ package com.generated.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.hardware.usb.UsbDevice;
@@ -39,6 +41,49 @@ public class MainActivity extends Activity {
     private ByteSource currentByteSource;
     private Uri currentUri;
     private UsbDevice currentUsbDevice;
+
+    private final BroadcastReceiver detachReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent != null && UsbManager.ACTION_USB_DEVICE_DETACHED.equals(intent.getAction())) {
+                UsbDevice detachedDevice = null;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    detachedDevice = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
+                } else {
+                    detachedDevice = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                }
+
+                if (detachedDevice != null && currentUsbDevice != null && detachedDevice.getDeviceId() == currentUsbDevice.getDeviceId()) {
+                    // Stop any ongoing scan or restore cleanly
+                    if (ScanService.isScanRunning()) {
+                        Intent stopScan = new Intent(MainActivity.this, ScanService.class);
+                        stopScan.setAction(ScanService.ACTION_CANCEL);
+                        startService(stopScan);
+                    }
+                    if (RestoreService.isRestoreRunning()) {
+                        Intent stopRestore = new Intent(MainActivity.this, RestoreService.class);
+                        stopRestore.setAction(RestoreService.ACTION_CANCEL);
+                        startService(stopRestore);
+                    }
+
+                    if (currentByteSource != null) {
+                        currentByteSource.close();
+                        currentByteSource = null;
+                    }
+                    currentUsbDevice = null;
+                    tvFileName.setText(getString(R.string.file_name_label) + getString(R.string.no_file_selected));
+                    tvFileSize.setText(getString(R.string.file_size_label) + "-");
+                    btnStartScan.setEnabled(false);
+
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("התקן נותק")
+                            .setMessage("התקן ה-USB / קורא הכרטיסים נותק. החיבור נסגר ושמירת הנתונים הקיימת נשמרה.")
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show();
+                }
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -176,7 +221,7 @@ public class MainActivity extends Activity {
 
         TextView tvVersion = new TextView(this);
         String buildDateTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date());
-        tvVersion.setText("v0.4 build " + buildDateTime);
+        tvVersion.setText("v0.5 build " + buildDateTime);
         tvVersion.setTextSize(11);
         tvVersion.setTextColor(0xFF888888);
         FrameLayout.LayoutParams versionParams = new FrameLayout.LayoutParams(
@@ -232,6 +277,31 @@ public class MainActivity extends Activity {
         });
 
         setContentView(rootContainer);
+        handleIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIntent(intent);
+    }
+
+    private void handleIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+            UsbDevice device = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
+            } else {
+                device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            }
+
+            if (device != null) {
+                loadUsbDevice(device);
+            }
+        }
     }
 
     private void requestNotificationPermissionIfNeeded() {
@@ -339,6 +409,20 @@ public class MainActivity extends Activity {
         try {
             currentUri = null;
             currentUsbDevice = device;
+            
+            UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+            if (!usbManager.hasPermission(device)) {
+                // Request permission if missing despite system dialog grant
+                Intent broadcastIntent = new Intent("com.generated.app.USB_PERMISSION");
+                broadcastIntent.setPackage(getPackageName());
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    flags |= PendingIntent.FLAG_MUTABLE;
+                }
+                PendingIntent pi = PendingIntent.getBroadcast(this, 0, broadcastIntent, flags);
+                usbManager.requestPermission(device, pi);
+            }
+
             currentByteSource = new UsbMassStorageSource(this, device);
             
             String displayName = device.getProductName() != null ? device.getProductName() : "USB Storage";
@@ -347,6 +431,8 @@ public class MainActivity extends Activity {
             tvFileName.setText(getString(R.string.file_name_label) + displayName);
             tvFileSize.setText(getString(R.string.file_size_label) + formatSize(size));
             btnStartScan.setEnabled(true);
+
+            Toast.makeText(this, "התקן זוהה בהצלחה: " + displayName, Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
             currentUsbDevice = null;
@@ -448,6 +534,25 @@ public class MainActivity extends Activity {
         final String[] units = new String[]{"בייט", "קילובייט", "מגהבייט", "ג׳יגהבייט", "טרהבייט"};
         int digitGroups = (int) (Math.log10(sizeBytes) / Math.log10(1024));
         return String.format(java.util.Locale.getDefault(), "%.2f %s", sizeBytes / Math.pow(1024, digitGroups), units[digitGroups]);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        IntentFilter filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(detachReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(detachReceiver, filter);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        try {
+            unregisterReceiver(detachReceiver);
+        } catch (Exception ignored) {}
     }
 
     @Override
