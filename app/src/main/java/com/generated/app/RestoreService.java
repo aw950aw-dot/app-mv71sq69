@@ -140,7 +140,7 @@ public class RestoreService extends Service {
                     wakeLock.acquire(4 * 60 * 60 * 1000L);
                 }
 
-                startForeground(NOTIFICATION_ID, createNotification("מתחיל שחזור קבצים...", 0, "מעבד נתונים..."));
+                startForeground(NOTIFICATION_ID, createNotification("מכין את השחזור...", 0, "מעבד נתונים..."));
 
                 try {
                     if (sourceUri != null) {
@@ -249,7 +249,7 @@ public class RestoreService extends Service {
                     return;
                 }
 
-                List<RecoveredEntry> allEntries = dbHelper.getAllEntriesForSaveAll();
+                List<RecoveredEntry> allEntries = saveAll ? dbHelper.getAllEntriesForSaveAll() : dbHelper.getEntriesForFilteredRestore();
                 Map<Long, RecoveredEntry> entryMap = new HashMap<>();
                 for (RecoveredEntry e : allEntries) {
                     entryMap.put(e.getId(), e);
