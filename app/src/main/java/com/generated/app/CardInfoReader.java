@@ -13,11 +13,11 @@ public class CardInfoReader {
 
     public static CardInfo read(Context context, UsbDevice device) {
         if (ScanService.isScanRunning() || RestoreService.isRestoreRunning()) {
-            return new CardInfo(device != null ? device.getProductName() : "Unknown", 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Scan or Restore service is currently running.");
+            return new CardInfo(device != null ? device.getProductName() : "Unknown", 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Scan or Restore service is currently running.", 0, 0, 0, 0, 0);
         }
 
         if (device == null || context == null) {
-            return new CardInfo("Unknown", 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Invalid device or context.");
+            return new CardInfo("Unknown", 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Invalid device or context.", 0, 0, 0, 0, 0);
         }
 
         String readerName = device.getProductName() != null ? device.getProductName() : "USB Card Reader";
@@ -27,7 +27,7 @@ public class CardInfoReader {
             source = new UsbMassStorageSource(context, device);
             long totalSize = source.getSize();
             if (totalSize <= 0) {
-                return new CardInfo(readerName, 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Card size is zero or unreadable.");
+                return new CardInfo(readerName, 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Card size is zero or unreadable.", 0, 0, 0, 0, 0);
             }
 
             byte[] sector0 = new byte[512];
@@ -113,6 +113,60 @@ public class CardInfoReader {
                 }
             }
 
+            // Speed test: read 8 MB from the middle of the card in 64 KB reads and compute bytes per second
+            long measuredSpeedBytesPerSec = 0;
+            try {
+                long middleOffset = totalSize / 2;
+                long targetReadBytes = 8L * 1024L * 1024L; // 8 MB
+                long bytesToRead = Math.min(targetReadBytes, Math.max(0, totalSize - middleOffset));
+                if (bytesToRead > 0) {
+                    byte[] testBuf = new byte[65536]; // 64 KB
+                    long startTime = System.currentTimeMillis();
+                    long bytesActuallyRead = 0;
+                    long currentOff = middleOffset;
+
+                    while (bytesActuallyRead < bytesToRead) {
+                        int toRead = (int) Math.min(testBuf.length, bytesToRead - bytesActuallyRead);
+                        int n = source.readAt(currentOff, testBuf, toRead);
+                        if (n <= 0) break;
+                        bytesActuallyRead += n;
+                        currentOff += n;
+                    }
+
+                    long durationMs = System.currentTimeMillis() - startTime;
+                    if (durationMs > 0 && bytesActuallyRead > 0) {
+                        measuredSpeedBytesPerSec = (bytesActuallyRead * 1000L) / durationMs;
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            if (measuredSpeedBytesPerSec <= 0) {
+                measuredSpeedBytesPerSec = 5L * 1024L * 1024L; // Fallback 5 MB/s
+            }
+
+            // Deep scan estimation: card size / speed x 1.1
+            long deepScanBaseSec = (long) Math.ceil((double) totalSize / measuredSpeedBytesPerSec * 1.1);
+            long deepScanMinSec = (long) (deepScanBaseSec * 0.75);
+            long deepScanMaxSec = (long) (deepScanBaseSec * 1.25);
+
+            // Regular scan estimation
+            long regularScanBaseSec = 0;
+            try {
+                SharedPreferences prefs = context.getSharedPreferences("sd_rescue_prefs", Context.MODE_PRIVATE);
+                long prevDurationMs = prefs.getLong("scan_duration_" + volumeSerial, 0);
+                if (prevDurationMs > 0) {
+                    regularScanBaseSec = prevDurationMs / 1000L;
+                }
+            } catch (Exception ignored) {}
+
+            if (regularScanBaseSec <= 0) {
+                double usedGb = (double) usedSizeBytes / (1024.0 * 1024.0 * 1024.0);
+                regularScanBaseSec = (long) Math.max(30.0, usedGb * 3.0);
+            }
+
+            long regularScanMinSec = (long) (regularScanBaseSec * 0.75);
+            long regularScanMaxSec = (long) (regularScanBaseSec * 1.25);
+
             try {
                 SharedPreferences prefs = context.getSharedPreferences("sd_rescue_prefs", Context.MODE_PRIVATE);
                 prefs.edit().putLong("last_card_serial", volumeSerial).apply();
@@ -120,10 +174,12 @@ public class CardInfoReader {
 
             return new CardInfo(readerName, totalSize, partitionStart, isFat32, bytesPerSector,
                     sectorsPerCluster, reservedSectors, fatCount, sectorsPerFat, totalClusters,
-                    volumeSerial, usedSizeBytes, freeSizeBytes, null);
+                    volumeSerial, usedSizeBytes, freeSizeBytes, null,
+                    measuredSpeedBytesPerSec, regularScanMinSec, regularScanMaxSec,
+                    deepScanMinSec, deepScanMaxSec);
 
         } catch (Exception e) {
-            return new CardInfo(readerName, 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Error reading card info: " + e.getMessage());
+            return new CardInfo(readerName, 0, 0, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Error reading card info: " + e.getMessage(), 0, 0, 0, 0, 0);
         } finally {
             if (source != null) {
                 try {

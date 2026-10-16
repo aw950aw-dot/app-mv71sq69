@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
@@ -383,6 +384,16 @@ public class ScanService extends Service {
                     dbHelper.computeAndStoreFolderTotals();
                     dbHelper.updateJobState("scan", "COMPLETED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
                     DiagnosticReporter.saveSummaryToDb(ScanService.this);
+
+                    // Save real duration in milliseconds in SharedPreferences under scan_duration_<last_card_serial>
+                    try {
+                        long realDurationMs = System.currentTimeMillis() - scanStartTime;
+                        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", Context.MODE_PRIVATE);
+                        long lastSerial = prefs.getLong("last_card_serial", 0);
+                        if (lastSerial != 0 && realDurationMs > 0) {
+                            prefs.edit().putLong("scan_duration_" + lastSerial, realDurationMs).apply();
+                        }
+                    } catch (Exception ignored) {}
 
                 } catch (Exception e) {
                     DiagnosticReporter.logError(e, "Scan thread exception caught.");

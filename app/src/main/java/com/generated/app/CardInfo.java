@@ -15,12 +15,20 @@ public class CardInfo {
     private final long usedSizeBytes;
     private final long freeSizeBytes;
     private final String errorText;
+    private final long measuredSpeedBytesPerSec;
+    private final long regularScanEstMinSec;
+    private final long regularScanEstMaxSec;
+    private final long deepScanEstMinSec;
+    private final long deepScanEstMaxSec;
 
     public CardInfo(String readerName, long totalSizeBytes, long partitionStartSector,
                     boolean isFat32, int bytesPerSector, int sectorsPerCluster,
                     int reservedSectors, int fatCount, long sectorsPerFat,
                     long totalClusters, long volumeSerial, long usedSizeBytes,
-                    long freeSizeBytes, String errorText) {
+                    long freeSizeBytes, String errorText,
+                    long measuredSpeedBytesPerSec,
+                    long regularScanEstMinSec, long regularScanEstMaxSec,
+                    long deepScanEstMinSec, long deepScanEstMaxSec) {
         this.readerName = readerName;
         this.totalSizeBytes = totalSizeBytes;
         this.partitionStartSector = partitionStartSector;
@@ -35,6 +43,11 @@ public class CardInfo {
         this.usedSizeBytes = usedSizeBytes;
         this.freeSizeBytes = freeSizeBytes;
         this.errorText = errorText;
+        this.measuredSpeedBytesPerSec = measuredSpeedBytesPerSec;
+        this.regularScanEstMinSec = regularScanEstMinSec;
+        this.regularScanEstMaxSec = regularScanEstMaxSec;
+        this.deepScanEstMinSec = deepScanEstMinSec;
+        this.deepScanEstMaxSec = deepScanEstMaxSec;
     }
 
     public String getReaderName() { return readerName; }
@@ -51,4 +64,9 @@ public class CardInfo {
     public long getUsedSizeBytes() { return usedSizeBytes; }
     public long getFreeSizeBytes() { return freeSizeBytes; }
     public String getErrorText() { return errorText; }
+    public long getMeasuredSpeedBytesPerSec() { return measuredSpeedBytesPerSec; }
+    public long getRegularScanEstMinSec() { return regularScanEstMinSec; }
+    public long getRegularScanEstMaxSec() { return regularScanEstMaxSec; }
+    public long getDeepScanEstMinSec() { return deepScanEstMinSec; }
+    public long getDeepScanEstMaxSec() { return deepScanEstMaxSec; }
 }
