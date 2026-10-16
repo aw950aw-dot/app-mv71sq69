@@ -317,13 +317,9 @@ public class ScanActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
 
         try {
-            SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-            boolean disableAnim = prefs.getBoolean(SettingsActivity.PREF_DISABLE_ANIMATION, false);
-            if (!disableAnim) {
-                scanAnimationView = new ScanAnimationView(this);
-                animationContainer.addView(scanAnimationView, new FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-            }
+            scanAnimationView = new ScanAnimationView(this);
+            animationContainer.addView(scanAnimationView, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         } catch (Throwable t) {
             if (scanAnimationView != null) {
                 animationContainer.removeView(scanAnimationView);

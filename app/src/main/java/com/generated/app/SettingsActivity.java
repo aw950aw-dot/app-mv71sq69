@@ -29,7 +29,6 @@ public class SettingsActivity extends Activity {
     private static final int REQUEST_CODE_CHANGE_DEST = 3003;
     private static final int REQUEST_CODE_OPEN_IMAGE = 3004;
     private static final int REQUEST_CODE_SAVE_REPORT = 3005;
-    public static final String PREF_DISABLE_ANIMATION = "pref_disable_animation";
 
     private TextView tvDestInfo;
     private TextView tvImageSourceInfo;
@@ -220,25 +219,6 @@ public class SettingsActivity extends Activity {
                 updatePerformanceLogInfoText();
             }
         });
-
-        // Advanced items inside advancedContainer
-        final CheckBox cbDisableAnim = new CheckBox(this);
-        cbDisableAnim.setText("Disable scan animation (בטל אנימציית סריקה)");
-        SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
-        cbDisableAnim.setChecked(prefs.getBoolean(PREF_DISABLE_ANIMATION, false));
-        cbDisableAnim.setTextSize(14);
-        cbDisableAnim.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(PREF_DISABLE_ANIMATION, isChecked)
-                    .apply();
-        });
-        LinearLayout.LayoutParams cbAnimLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        cbAnimLp.bottomMargin = 12;
-        advancedContainer.addView(cbDisableAnim, cbAnimLp);
 
         tvImageSourceInfo = new TextView(this);
         tvImageSourceInfo.setTextSize(13);
