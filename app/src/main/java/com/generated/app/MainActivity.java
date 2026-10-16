@@ -113,7 +113,6 @@ public class MainActivity extends Activity {
                     .build());
         }
         
-        // Check job state per requirement
         new Thread(() -> {
             DatabaseHelper db = DatabaseHelper.getInstance(MainActivity.this);
             db.checkAndInterruptStaleJobs();
@@ -421,7 +420,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void loadUsbDevice(UsbDevice device) {
+    private void loadUsbDevice(final UsbDevice device) {
         if (currentByteSource != null) {
             currentByteSource.close();
             currentByteSource = null;
@@ -445,6 +444,23 @@ public class MainActivity extends Activity {
 
             currentByteSource = new UsbMassStorageSource(this, device);
             updateUIState();
+
+            // Run CardInfoReader on a background thread when services are not running
+            new Thread(() -> {
+                if (!ScanService.isScanRunning() && !RestoreService.isRestoreRunning()) {
+                    CardInfo info = CardInfoReader.read(MainActivity.this, device);
+                    if (info.getErrorText() == null) {
+                        String summary = String.format(Locale.getDefault(),
+                                "גודל: %s | בשימוש: %s | פנוי: %s | סוג: %s",
+                                formatSize(info.getTotalSizeBytes()),
+                                formatSize(info.getUsedSizeBytes()),
+                                formatSize(info.getFreeSizeBytes()),
+                                (info.isFat32() ? "FAT32" : "Unknown"));
+                        mainHandler.post(() -> tvStatusSubtitle.setText(summary));
+                    }
+                }
+            }).start();
+
         } catch (Exception e) {
             currentUsbDevice = null;
             updateUIState();
