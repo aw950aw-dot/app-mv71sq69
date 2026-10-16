@@ -32,6 +32,7 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.HorizontalScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -82,6 +83,7 @@ public class ScanActivity extends Activity {
     private ProgressBar dashboardLoadingProgress;
 
     private LinearLayout layoutFolderBrowser;
+    private HorizontalScrollView breadcrumbScrollContainer;
     private LinearLayout layoutBreadcrumb;
     private EditText etSearchBrowser;
     private Button btnSelectAllBrowser;
@@ -190,7 +192,7 @@ public class ScanActivity extends Activity {
         Log.d("Lifecycle", "ScanActivity onNewIntent. Screen chosen: Scan/Progress or Results Screen");
         setIntent(intent);
         sourceUri = intent.getParcelableExtra(EXTRA_URI);
-        usbDeviceName = getIntent().getStringExtra(EXTRA_USB_DEVICE_NAME);
+        usbDeviceName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
         decideScreen();
     }
 
@@ -652,12 +654,23 @@ public class ScanActivity extends Activity {
             public void afterTextChanged(Editable s) {}
         });
 
+        breadcrumbScrollContainer = new HorizontalScrollView(this);
+        breadcrumbScrollContainer.setHorizontalScrollBarEnabled(false);
+        breadcrumbScrollContainer.setVerticalScrollBarEnabled(false);
+        LinearLayout.LayoutParams bcScrollParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (int) (40 * getResources().getDisplayMetrics().density)
+        );
+        bcScrollParams.bottomMargin = 8;
+        browserTopBar.addView(breadcrumbScrollContainer, bcScrollParams);
+
         layoutBreadcrumb = new LinearLayout(this);
         layoutBreadcrumb.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams bcParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        bcParams.bottomMargin = 8;
-        browserTopBar.addView(layoutBreadcrumb, bcParams);
+        layoutBreadcrumb.setGravity(Gravity.CENTER_VERTICAL);
+        breadcrumbScrollContainer.addView(layoutBreadcrumb, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.MATCH_PARENT
+        ));
         updateBreadcrumbBar();
 
         LinearLayout selActionLayout = new LinearLayout(this);
@@ -1023,6 +1036,7 @@ public class ScanActivity extends Activity {
         tvRoot.setTextSize(14);
         tvRoot.setTextColor(0xFF1976D2);
         tvRoot.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvRoot.setSingleLine(true);
         tvRoot.setPadding(4, 4, 4, 4);
         tvRoot.setOnClickListener(v -> {
             isSearching = false;
@@ -1038,7 +1052,12 @@ public class ScanActivity extends Activity {
         });
         layoutBreadcrumb.addView(tvRoot);
 
-        if (currentDirPath == null || currentDirPath.equals("/")) return;
+        if (currentDirPath == null || currentDirPath.equals("/")) {
+            if (breadcrumbScrollContainer != null) {
+                breadcrumbScrollContainer.post(() -> breadcrumbScrollContainer.fullScroll(View.FOCUS_LEFT));
+            }
+            return;
+        }
 
         String[] parts = currentDirPath.split("/");
         String pathSoFar = "";
@@ -1051,6 +1070,7 @@ public class ScanActivity extends Activity {
             tvSep.setText(" > ");
             tvSep.setTextSize(14);
             tvSep.setTextColor(0xFF757575);
+            tvSep.setSingleLine(true);
             layoutBreadcrumb.addView(tvSep);
 
             TextView tvPart = new TextView(this);
@@ -1058,6 +1078,7 @@ public class ScanActivity extends Activity {
             tvPart.setTextSize(14);
             tvPart.setTextColor(0xFF1976D2);
             tvPart.setTypeface(null, android.graphics.Typeface.BOLD);
+            tvPart.setSingleLine(true);
             tvPart.setPadding(4, 4, 4, 4);
             tvPart.setOnClickListener(v -> {
                 isSearching = false;
@@ -1075,6 +1096,10 @@ public class ScanActivity extends Activity {
                 }).start();
             });
             layoutBreadcrumb.addView(tvPart);
+        }
+
+        if (breadcrumbScrollContainer != null) {
+            breadcrumbScrollContainer.post(() -> breadcrumbScrollContainer.fullScroll(View.FOCUS_LEFT));
         }
     }
 
