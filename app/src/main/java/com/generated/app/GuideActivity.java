@@ -27,7 +27,7 @@ public class GuideActivity extends Activity {
 
         TextView tvTitle = new TextView(this);
         tvTitle.setText(R.string.guide_title);
-        tvTitle.setTextSize(24);
+        tvTitle.setTextSize(22);
         tvTitle.setTextColor(0xFF1976D2);
         tvTitle.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
@@ -37,10 +37,9 @@ public class GuideActivity extends Activity {
         titleParams.bottomMargin = (int) (20 * getResources().getDisplayMetrics().density);
         root.addView(tvTitle, titleParams);
 
-        addGuideCard(root, "1. הפסק להשתמש בכרטיס מיד!", "ברגע ששמת לב שנמחקו קבצים או שהכרטיס נפגם, הפסק מיד כל כתיבה או צילום חדש. המשך שימוש עלול לדרוס לצמיתות את המידע המחוק.");
-        addGuideCard(root, "2. חיבור בטוח למחשב או למכשיר", "השתקור בקורא כרטיסים איכותי או חבר את ההתקן ישירות למכשיר אנדרואיד התומך ב-USB OTG.");
-        addGuideCard(root, "3. סריקה ושמירה למיקום נפרד", "בצע סריקה מלאה בעזרת SD Rescue, בחר את הקבצים שברצונך לשחזר, ושמור אותם תמיד בכונן או בתיקייה שונה מזו שנסרקה כדי למנוע דריסה.");
-        addGuideCard(root, "4. טיפול בקבצים פגומים", "חלק מהקבצים עשויים להיות חלקיים אם הכרטיס עבר כתיבה מרובה לאחר המחיקה. בדוק תצוגה מקדימה לפני השמירה.");
+        addGuideCard(root, "1. אל תסכים לפרמט!", "כשהטלפון מציע לפרמט את הכרטיס, אל תאשר. פירמוט מוחק את מבנה התיקיות ומקשה על ההצלה. אל תכתוב לכרטיס עד שהקבצים נשמרו במקום אחר.");
+        addGuideCard(root, "2. חבר דרך קורא כרטיסים (OTG)", "חבר קורא כרטיסים לטלפון בכבל OTG. כשאנדרואיד שואל איזו אפליקציה לפתוח, בחר SD Rescue וסמן 'תמיד'. אם החיבור מתנתק, נסה כבל או קורא אחר.");
+        addGuideCard(root, "3. סרוק את הכרטיס", "לחץ 'סרוק את הכרטיס'. האפליקציה קוראת את מבנה התיקיות כפי שהוא, ובכרטיס גדול זה לוקח כמה דקות. ההתקדמות מופיעה בהתראה, ואפשר לסגור את האפליקציה בזמן הסריקה.");
 
         Button btnBack = new Button(this);
         btnBack.setText("חזרה");

@@ -29,7 +29,7 @@
     <string name="file_type_prefix">סוג: </string>
     <string name="menu_guide">מדריך חירום</string>
     <string name="menu_settings">הגדרות</string>
-    <string name="guide_title">הפסק להשתמש בכרטיס מיד!</string>
+    <string name="guide_title">הצלת קבצים מכרטיס שמבקש פירמוט</string>
     <string name="settings_title">הגדרות סריקה</string>
     <string name="setting_deep_scan">סריקה עמוקה של חתימות (Carving)</string>
     <string name="setting_background_service">שירות רקע והתראות מתמשכות</string>
