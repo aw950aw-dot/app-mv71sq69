@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.database.sqlite.SQLiteStatement;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -156,10 +157,35 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         db.execSQL("INSERT OR REPLACE INTO " + TABLE_META + "(" + COL_META_KEY + ", " + COL_META_VAL + ") VALUES('db_version', '14')");
 
-        db.execSQL("CREATE INDEX idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
-        db.execSQL("CREATE INDEX idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
-        db.execSQL("CREATE INDEX idx_nodes_selected ON " + TABLE_NODES + "(" + COL_SELECTED + ")");
-        db.execSQL("CREATE INDEX idx_nodes_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
+        createAllIndexes(db);
+    }
+
+    private void createAllIndexes(SQLiteDatabase db) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_parent_dir_name ON " + TABLE_NODES + "(" + COL_PARENT_ID + ", " + COL_IS_DIR + ", " + COL_NAME + ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_category_name ON " + TABLE_NODES + "(" + COL_CATEGORY + ", " + COL_NAME + ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_selected ON " + TABLE_NODES + "(" + COL_SELECTED + ")");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_nodes_path ON " + TABLE_NODES + "(" + COL_PATH + ")");
+    }
+
+    public synchronized void dropAllIndexes() {
+        long start = System.currentTimeMillis();
+        SQLiteDatabase db = getWritableDatabase();
+        try {
+            db.execSQL("DROP INDEX IF EXISTS idx_nodes_parent_dir_name");
+            db.execSQL("DROP INDEX IF EXISTS idx_nodes_category_name");
+            db.execSQL("DROP INDEX IF EXISTS idx_nodes_selected");
+            db.execSQL("DROP INDEX IF EXISTS idx_nodes_path");
+        } catch (Exception ignored) {}
+        PerformanceLogger.record("dropAllIndexes", System.currentTimeMillis() - start);
+    }
+
+    public synchronized void recreateAllIndexes() {
+        long start = System.currentTimeMillis();
+        SQLiteDatabase db = getWritableDatabase();
+        try {
+            createAllIndexes(db);
+        } catch (Exception ignored) {}
+        PerformanceLogger.record("recreateAllIndexes", System.currentTimeMillis() - start);
     }
 
     @Override
@@ -412,33 +438,60 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         long start = System.currentTimeMillis();
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
+        SQLiteStatement stmt = null;
         try {
+            String sql = "INSERT OR REPLACE INTO " + TABLE_NODES + " (" +
+                    COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " +
+                    COL_IS_DIR + ", " + COL_SIZE + ", " + COL_OFFSET + ", " + COL_MODIFIED + ", " +
+                    COL_TYPE + ", " + COL_SELECTED + ", " + COL_RAW_NAME + ", " + COL_UNREADABLE + ", " +
+                    COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " +
+                    COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+            stmt = db.compileStatement(sql);
+
             for (RecoveredEntry entry : entries) {
-                ContentValues cv = new ContentValues();
-                cv.put(COL_ID, entry.getId());
-                cv.put(COL_PARENT_ID, entry.getParentId());
-                cv.put(COL_NAME, entry.getName());
-                cv.put(COL_PATH, entry.getPath());
-                cv.put(COL_IS_DIR, entry.isDirectory() ? 1 : 0);
-                cv.put(COL_SIZE, entry.getLength());
-                cv.put(COL_OFFSET, entry.getOffset());
-                cv.put(COL_MODIFIED, entry.getModifiedTime());
-                cv.put(COL_TYPE, FileType.safeName(entry.getType()));
-                cv.put(COL_SELECTED, entry.isSelected() ? 1 : 0);
-                cv.put(COL_RAW_NAME, entry.getRawNameBytes());
-                cv.put(COL_UNREADABLE, entry.isUnreadable() ? 1 : 0);
-                cv.put(COL_UNREADABLE_REASON, entry.getUnreadableReason());
-                cv.put(COL_FIRST_CLUSTER, entry.getFirstCluster());
-                cv.put(COL_RESTORE_STATUS, entry.getRestoreStatus());
-                cv.put(COL_CATEGORY, entry.getCategory());
-                cv.put(COL_FILE_COUNT, entry.getCachedRecursiveFileCount());
-                cv.put(COL_TOTAL_SIZE, entry.getCachedRecursiveSize());
-                db.insertWithOnConflict(TABLE_NODES, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+                stmt.clearBindings();
+                stmt.bindLong(1, entry.getId());
+                stmt.bindLong(2, entry.getParentId());
+                stmt.bindString(3, entry.getName());
+                stmt.bindString(4, entry.getPath());
+                stmt.bindLong(5, entry.isDirectory() ? 1 : 0);
+                stmt.bindLong(6, entry.getLength());
+                stmt.bindLong(7, entry.getOffset());
+                stmt.bindLong(8, entry.getModifiedTime());
+                stmt.bindString(9, FileType.safeName(entry.getType()));
+                stmt.bindLong(10, entry.isSelected() ? 1 : 0);
+                byte[] raw = entry.getRawNameBytes();
+                if (raw != null && raw.length > 0) {
+                    stmt.bindBlob(11, raw);
+                } else {
+                    stmt.bindNull(11);
+                }
+                stmt.bindLong(12, entry.isUnreadable() ? 1 : 0);
+                String reason = entry.getUnreadableReason();
+                if (reason != null) {
+                    stmt.bindString(13, reason);
+                } else {
+                    stmt.bindNull(13);
+                }
+                stmt.bindLong(14, entry.getFirstCluster());
+                stmt.bindLong(15, entry.getRestoreStatus());
+                String cat = entry.getCategory();
+                if (cat != null) {
+                    stmt.bindString(16, cat);
+                } else {
+                    stmt.bindNull(16);
+                }
+                stmt.bindLong(17, entry.getCachedRecursiveFileCount());
+                stmt.bindLong(18, entry.getCachedRecursiveSize());
+                stmt.executeInsert();
             }
             db.setTransactionSuccessful();
         } catch (Exception e) {
             DiagnosticReporter.logError(e, "Database batch insert failed");
         } finally {
+            if (stmt != null) {
+                try { stmt.close(); } catch (Exception ignored) {}
+            }
             try { db.endTransaction(); } catch (Exception ignored) {}
             PerformanceLogger.record("insertEntriesInBatch", System.currentTimeMillis() - start);
         }
@@ -823,7 +876,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
 
-        // 1. Load selected nodes without raw_name
         List<Long> selectedIds = new ArrayList<>();
         Set<Long> ancestorIds = new HashSet<>();
 
@@ -851,7 +903,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             cSel.close();
         }
 
-        // Gather all required IDs: selected nodes + their ancestor folders
         List<Long> neededIds = new ArrayList<>(selectedIds);
         for (long aId : ancestorIds) {
             if (!nodeMap.containsKey(aId)) {
@@ -859,7 +910,6 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
         }
 
-        // Query in chunks of 500 to avoid SQL variable limits
         if (!neededIds.isEmpty()) {
             for (int i = 0; i < neededIds.size(); i += 500) {
                 int end = Math.min(i + 500, neededIds.size());

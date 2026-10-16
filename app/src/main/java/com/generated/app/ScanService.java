@@ -118,8 +118,9 @@ public class ScanService extends Service {
                 DiagnosticReporter.clear();
                 try {
                     dbHelper.clearDatabase();
+                    dbHelper.dropAllIndexes();
                 } catch (Exception dbEx) {
-                    DiagnosticReporter.logError(dbEx, "Failed to clear database on startup");
+                    DiagnosticReporter.logError(dbEx, "Failed to clear database or drop indexes on startup");
                 }
 
                 filesCount.set(0);
@@ -314,6 +315,8 @@ public class ScanService extends Service {
                         }
                     });
 
+                    dbHelper.recreateAllIndexes();
+
                     int totalFiles = dbHelper.getTotalFilesCount();
                     int totalFolders = dbHelper.getTotalFoldersCount();
                     filesCount.set(totalFiles);
@@ -383,6 +386,7 @@ public class ScanService extends Service {
 
                 } catch (Exception e) {
                     DiagnosticReporter.logError(e, "Scan thread exception caught.");
+                    dbHelper.recreateAllIndexes();
                     dbHelper.updateJobState("scan", "INTERRUPTED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
                     ServiceState.getInstance().update(ServiceState.Phase.IDLE, filesCount.get(), foldersCount.get(), totalBytesScanned.get(), currentFolderPath, 0, "", e.getMessage());
                 } finally {
