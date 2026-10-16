@@ -281,7 +281,7 @@ public class ScanActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
         root.setBackgroundColor(0xFFF8F9FA);
 
-        // --- Screen 1: Scan / Progress Screen ---
+        // --- Screen 1: Scan / Progress Screen (height 0, weight 1) ---
         layoutScanScreen = new LinearLayout(this);
         layoutScanScreen.setOrientation(LinearLayout.VERTICAL);
         layoutScanScreen.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -466,14 +466,13 @@ public class ScanActivity extends Activity {
             } catch (Exception ignored) {}
         });
 
-        // --- Screen 2: Results Dashboard ---
+        // --- Screen 2: Results Dashboard (height 0, weight 1) ---
         layoutResultsDashboard = new LinearLayout(this);
         layoutResultsDashboard.setOrientation(LinearLayout.VERTICAL);
-        layoutResultsDashboard.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
         layoutResultsDashboard.setBackgroundColor(0xFFF8F9FA);
         layoutResultsDashboard.setVisibility(View.GONE);
-        root.addView(layoutResultsDashboard);
+        root.addView(layoutResultsDashboard, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
         topBarResults = new LinearLayout(this);
         topBarResults.setOrientation(LinearLayout.HORIZONTAL);
@@ -491,9 +490,6 @@ public class ScanActivity extends Activity {
         topBarResults.addView(tvResTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
         btnSearchToggle = new Button(this);
-        ImageView ivSearch = new ImageView(this);
-        ivSearch.setImageResource(R.drawable.ic_search);
-        ivSearch.setColorFilter(0xFF1976D2);
         btnSearchToggle.setBackgroundColor(0x00000000);
         btnSearchToggle.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
         topBarResults.addView(btnSearchToggle, new LinearLayout.LayoutParams(
@@ -621,14 +617,13 @@ public class ScanActivity extends Activity {
             }).start();
         });
 
-        // --- Screen 3: Folder Browser Screen with Overlay FrameLayout for Spinner ---
+        // --- Screen 3: Folder Browser Screen (height 0, weight 1) ---
         layoutFolderBrowser = new LinearLayout(this);
         layoutFolderBrowser.setOrientation(LinearLayout.VERTICAL);
-        layoutFolderBrowser.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
         layoutFolderBrowser.setBackgroundColor(0xFFF8F9FA);
         layoutFolderBrowser.setVisibility(View.GONE);
-        root.addView(layoutFolderBrowser);
+        root.addView(layoutFolderBrowser, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
         LinearLayout browserTopBar = new LinearLayout(this);
         browserTopBar.setOrientation(LinearLayout.VERTICAL);
@@ -775,7 +770,7 @@ public class ScanActivity extends Activity {
 
         btnExecuteRestore.setOnClickListener(v -> promptForSaveDirectory(false));
 
-        // Add RestoreProgressBarView at the bottom of the root layout
+        // Add RestoreProgressBarView pinned at the bottom of the root layout
         RestoreProgressBarView restoreProgressBarView = new RestoreProgressBarView(this);
         root.addView(restoreProgressBarView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
