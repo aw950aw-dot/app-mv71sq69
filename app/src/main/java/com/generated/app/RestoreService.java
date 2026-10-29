@@ -44,6 +44,8 @@ public class RestoreService extends Service {
     private PowerManager.WakeLock wakeLock;
     private DatabaseHelper dbHelper;
     private ByteSource byteSource;
+    private Fat32Volume fat32Volume;      // lets us follow the cluster chain of fragmented files
+    private boolean volumeProbed = false;
     private volatile boolean isCancelled = false;
 
     private static volatile boolean isRestoreRunning = false;
@@ -550,6 +552,18 @@ public class RestoreService extends Service {
             throw new Exception("ByteSource is null during restore.");
         }
 
+        if (!volumeProbed) {
+            volumeProbed = true;
+            try {
+                fat32Volume = Fat32Volume.open(byteSource);
+            } catch (Exception e) {
+                fat32Volume = null;
+            }
+        }
+        // Files from the filesystem scan are read along their FAT cluster chain. Files found by the deep scan
+        // (no cluster number) can only be read as one continuous block.
+        final boolean followChain = fat32Volume != null && node.getFirstCluster() >= 2;
+
         String sanitizedName = sanitizeFileName(node.getName());
         DocumentFileCompat existing = parentDoc.findFile(sanitizedName);
         if (existing != null) {
@@ -561,7 +575,7 @@ public class RestoreService extends Service {
             } catch (Exception ignored) {}
         }
 
-        byte[] firstChunk = new byte[(int) Math.min(node.getLength(), 65536L)];
+        byte[] firstChunk = new byte[(int) Math.min(node.getLength(), followChain ? 4096L : 65536L)];
         int initialRead = 0;
         if (node.getLength() > 0) {
             initialRead = byteSource.readAt(node.getOffset(), firstChunk, firstChunk.length);
@@ -586,7 +600,15 @@ public class RestoreService extends Service {
             long totalBytesWritten = 0;
             long expectedSize = node.getLength();
 
-            if (expectedSize > 0) {
+            if (expectedSize > 0 && followChain) {
+                totalBytesWritten = fat32Volume.copyFile(byteSource, node.getFirstCluster(), expectedSize, out,
+                        new Fat32Volume.Cancel() {
+                            @Override
+                            public boolean isCancelled() {
+                                return RestoreService.this.isCancelled;
+                            }
+                        });
+            } else if (expectedSize > 0) {
                 out.write(firstChunk, 0, initialRead);
                 totalBytesWritten += initialRead;
 
@@ -672,6 +694,8 @@ public class RestoreService extends Service {
         if (byteSource != null) {
             byteSource.close();
             byteSource = null;
+            fat32Volume = null;
+            volumeProbed = false;
         }
 
         if (wakeLock != null && wakeLock.isHeld()) {
@@ -732,6 +756,8 @@ public class RestoreService extends Service {
         if (byteSource != null) {
             byteSource.close();
             byteSource = null;
+            fat32Volume = null;
+            volumeProbed = false;
         }
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
