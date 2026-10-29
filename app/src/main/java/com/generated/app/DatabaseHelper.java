@@ -89,6 +89,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         super.onConfigure(db);
         setWriteAheadLoggingEnabled(true);
         try {
+            db.execSQL("PRAGMA synchronous = NORMAL");   // WAL: a commit no longer waits for a flash sync
+        } catch (Exception ignored) {}
+        try {
             Cursor c = db.rawQuery("PRAGMA busy_timeout = 15000", null);
             if (c != null) {
                 c.moveToFirst();
@@ -544,10 +547,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     }
                 }
 
-                for (long fId : folderIds) {
-                    int count = folderFileCount.getOrDefault(fId, 0);
-                    long size = folderTotalSize.getOrDefault(fId, 0L);
-                    db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_FILE_COUNT + "=?, " + COL_TOTAL_SIZE + "=? WHERE " + COL_ID + "=?", new Object[]{count, size, fId});
+                SQLiteStatement upd = db.compileStatement("UPDATE " + TABLE_NODES + " SET " + COL_FILE_COUNT + "=?, " + COL_TOTAL_SIZE + "=? WHERE " + COL_ID + "=?");
+                try {
+                    for (long fId : folderIds) {
+                        int count = folderFileCount.getOrDefault(fId, 0);
+                        long size = folderTotalSize.getOrDefault(fId, 0L);
+                        upd.clearBindings();
+                        upd.bindLong(1, count);
+                        upd.bindLong(2, size);
+                        upd.bindLong(3, fId);
+                        upd.executeUpdateDelete();
+                    }
+                } finally {
+                    upd.close();
                 }
             }
 

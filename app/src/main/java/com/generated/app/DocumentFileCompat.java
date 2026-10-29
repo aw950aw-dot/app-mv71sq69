@@ -9,6 +9,9 @@ import android.content.ContentResolver;
 public class DocumentFileCompat {
     private final Context context;
     private final Uri uri;
+    // display name -> document id of this folder's children, loaded with ONE query (findFile used to list the whole
+    // folder for every file, which made big folders extremely slow)
+    private java.util.HashMap<String, String> childCache = null;
 
     private DocumentFileCompat(Context context, Uri uri) {
         this.context = context;
@@ -60,6 +63,16 @@ public class DocumentFileCompat {
 
     public DocumentFileCompat findFile(String displayName) {
         if (displayName == null) return null;
+        if (childCache == null) {
+            childCache = loadChildren();
+            if (childCache == null) return null;
+        }
+        String docId = childCache.get(displayName);
+        if (docId == null) return null;
+        return new DocumentFileCompat(context, DocumentsContract.buildDocumentUriUsingTree(uri, docId));
+    }
+
+    private java.util.HashMap<String, String> loadChildren() {
         ContentResolver resolver = context.getContentResolver();
         Uri childrenUri;
         try {
@@ -67,19 +80,25 @@ public class DocumentFileCompat {
         } catch (Exception e) {
             return null;
         }
+        java.util.HashMap<String, String> map = new java.util.HashMap<>();
         try (Cursor c = resolver.query(childrenUri, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
             if (c != null) {
                 while (c.moveToNext()) {
-                    String docId = c.getString(0);
                     String name = c.getString(1);
-                    if (displayName.equals(name)) {
-                        Uri childUri = DocumentsContract.buildDocumentUriUsingTree(uri, docId);
-                        return new DocumentFileCompat(context, childUri);
-                    }
+                    if (name != null && !map.containsKey(name)) map.put(name, c.getString(0));
                 }
             }
+        } catch (Exception e) {
+            return null;
+        }
+        return map;
+    }
+
+    private void remember(String displayName, Uri created) {
+        if (childCache == null || displayName == null || created == null) return;
+        try {
+            childCache.put(displayName, DocumentsContract.getDocumentId(created));
         } catch (Exception ignored) {}
-        return null;
     }
 
     public DocumentFileCompat createDirectory(String displayName) {
@@ -87,6 +106,7 @@ public class DocumentFileCompat {
             ContentResolver resolver = context.getContentResolver();
             Uri created = DocumentsContract.createDocument(resolver, uri, DocumentsContract.Document.MIME_TYPE_DIR, displayName);
             if (created != null) {
+                remember(displayName, created);
                 return new DocumentFileCompat(context, created);
             }
         } catch (Exception ignored) {}
@@ -98,6 +118,7 @@ public class DocumentFileCompat {
             ContentResolver resolver = context.getContentResolver();
             Uri created = DocumentsContract.createDocument(resolver, uri, mimeType, displayName);
             if (created != null) {
+                remember(displayName, created);
                 return new DocumentFileCompat(context, created);
             }
         } catch (Exception ignored) {}

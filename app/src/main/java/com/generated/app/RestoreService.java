@@ -561,7 +561,7 @@ public class RestoreService extends Service {
             } catch (Exception ignored) {}
         }
 
-        byte[] firstChunk = new byte[(int) Math.min(node.getLength(), 4096L)];
+        byte[] firstChunk = new byte[(int) Math.min(node.getLength(), 65536L)];
         int initialRead = 0;
         if (node.getLength() > 0) {
             initialRead = byteSource.readAt(node.getOffset(), firstChunk, firstChunk.length);
@@ -593,7 +593,7 @@ public class RestoreService extends Service {
                 long currentOffset = node.getOffset() + initialRead;
                 long remaining = expectedSize - initialRead;
 
-                byte[] buf = new byte[16384];
+                byte[] buf = new byte[65536];
                 while (remaining > 0 && !isCancelled) {
                     int toRead = (int) Math.min(buf.length, remaining);
                     int read = byteSource.readAt(currentOffset, buf, toRead);

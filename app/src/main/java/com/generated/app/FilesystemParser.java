@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashSet;
@@ -180,9 +181,13 @@ public class FilesystemParser {
             selfCheckLog.append("• Cluster 2 offset matches Region Start: ").append(selfCheckCluster2Ok ? "OK (" + cluster2Offset + ")" : "FAIL").append("\n");
             DiagnosticReporter.log(selfCheckLog.toString());
 
-            int fatBytesToRead = (int) Math.min(sectorsPerFAT * bytesPerSector, 16 * 1024 * 1024);
+            // ByteSource.readAt returns at most 64 KB per call, so the FAT must be read in a loop.
+            // (Before, only the first 64 KB were loaded; every cluster chain beyond cluster 16383 looked like
+            // it ended after one cluster, so big folders were cut.)
+            int fatBytesToRead = (int) Math.min(sectorsPerFAT * bytesPerSector, 64L * 1024 * 1024);
             byte[] fatTable = new byte[fatBytesToRead];
-            source.readAt(fatStartOffset, fatTable, fatBytesToRead);
+            readFullyBestEffort(source, fatStartOffset, fatTable, fatBytesToRead);
+            final FatLookup fatLookup = new FatLookup(source, fatStartOffset, fatTable, sectorsPerFAT * bytesPerSector);
 
             AtomicLong nextId = new AtomicLong(1);
 
@@ -202,12 +207,12 @@ public class FilesystemParser {
                 }
             }
 
-            List<WorkItem> queue = new ArrayList<>();
+            ArrayDeque<WorkItem> queue = new ArrayDeque<>();
             queue.add(new WorkItem(rootCluster, rootId, "/"));
             Set<Long> visitedClusters = new HashSet<>();
 
             while (!queue.isEmpty()) {
-                WorkItem work = queue.remove(0);
+                WorkItem work = queue.poll();
                 long currentCluster = work.cluster;
                 long parentNodeId = work.parentNodeId;
                 String currentPath = work.path;
@@ -218,6 +223,7 @@ public class FilesystemParser {
 
                 int maxClusters = 5000;
                 Fat32EntryParser entryParser = new Fat32EntryParser(getShortCharset());
+                final byte[] pieceBuf = new byte[65536];
 
                 while (currentCluster >= 2 && currentCluster < 0x0FFFFFF8 && maxClusters-- > 0 && !entryParser.isEnded()) {
                     if (!visitedClusters.add(currentCluster)) break;
@@ -227,11 +233,31 @@ public class FilesystemParser {
                         if (clusterOffset < 0 || clusterOffset + clusterSize > source.getSize()) break;
 
                         byte[] clusterData = new byte[(int) clusterSize];
-                        int read = source.readAt(clusterOffset, clusterData, (int) clusterSize);
-                        if (read <= 0) break;
+                        int filled = 0;          // bytes of this cluster read from the card so far
+                        int parsedUpTo = 0;      // bytes of this cluster already parsed
+                        boolean chainBroken = false;
 
-                        for (int i = 0; i < read - 31; i += 32) {
+                        // Read the directory in growing pieces (4 KB, 16 KB, then 64 KB) and stop as soon as the
+                        // end-of-directory marker is found. Most folders are tiny, so this avoids reading 64 KB each.
+                        while (parsedUpTo < (int) clusterSize && !entryParser.isEnded()) {
+                            int want = Math.min(nextPieceSize(filled, (int) clusterSize), pieceBuf.length);
+                            int got = source.readAt(clusterOffset + filled, pieceBuf, want);
+                            if (got <= 0) {
+                                chainBroken = (filled == 0);
+                                break;
+                            }
+                            System.arraycopy(pieceBuf, 0, clusterData, filled, got);
+                            filled += got;
+                            final int read = filled;
+
+                        for (int i = parsedUpTo; i < read - 31; i += 32) {
                             if (entryParser.isEnded()) break;
+
+                            int attrBits = clusterData[i + 11] & 0xFF;
+                            Fat32EntryParser.Item item = entryParser.feed(clusterData, i);
+                            if (item == null) {
+                                continue;
+                            }
 
                             List<byte[]> rawLfnBuffer = new ArrayList<>();
                             int peekOff = i;
@@ -245,12 +271,6 @@ public class FilesystemParser {
                                 } else {
                                     break;
                                 }
-                            }
-
-                            int attrBits = clusterData[i + 11] & 0xFF;
-                            Fat32EntryParser.Item item = entryParser.feed(clusterData, i);
-                            if (item == null) {
-                                continue;
                             }
 
                             if (item.hadLfn) {
@@ -268,43 +288,12 @@ public class FilesystemParser {
                                 continue;
                             }
 
+                            // (the per-folder '.' pre-check was removed: it cost one USB read per folder)
                             boolean isUnreadableFolder = false;
                             String unreadableReason = null;
-                            if (item.isDir && item.firstCluster >= 2) {
-                                long subClusterOffset = clusterRegionStart + (item.firstCluster - 2) * clusterSize;
-                                if (subClusterOffset >= 0 && subClusterOffset + 32 <= source.getSize()) {
-                                    byte[] dotEntryBuf = new byte[32];
-                                    if (source.readAt(subClusterOffset, dotEntryBuf, 32) == 32) {
-                                        String dotName = new String(dotEntryBuf, 0, 11, StandardCharsets.US_ASCII).trim();
-                                        int dotAttr = dotEntryBuf[11] & 0xFF;
-                                        long dotCluster = ((long) ByteBuffer.wrap(dotEntryBuf, 20, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() << 16) |
-                                                (ByteBuffer.wrap(dotEntryBuf, 26, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF);
-
-                                        StringBuilder first11Hex = new StringBuilder();
-                                        for (int bIdx = 0; bIdx < 11 && bIdx < dotEntryBuf.length; bIdx++) {
-                                            first11Hex.append(String.format("%02X ", dotEntryBuf[bIdx]));
-                                        }
-
-                                        if (!dotName.equals(".") || (dotAttr & 0x10) == 0 || dotCluster != item.firstCluster) {
-                                            // Requirement 4: Flag folder as unreadable ONLY when check fails AND folder has no valid entries in DB
-                                            // We perform preliminary check here; final unreadable flag is validated after scanning valid entries
-                                            isUnreadableFolder = true;
-                                            unreadableReason = String.format(Locale.getDefault(),
-                                                    "Failed '.' check: expected dotName='.', dotAttr=0x10, dotCluster=%d. Actual dotName='%s', dotAttr=0x%X, dotCluster=%d. First 11 bytes: [%s]",
-                                                    item.firstCluster, dotName, dotAttr, dotCluster, first11Hex.toString().trim());
-                                        }
-                                    } else {
-                                        isUnreadableFolder = true;
-                                        unreadableReason = "Failed to read first 32 bytes of subClusterOffset 0x" + Long.toHexString(subClusterOffset);
-                                    }
-                                } else {
-                                    isUnreadableFolder = true;
-                                    unreadableReason = "SubClusterOffset out of bounds: 0x" + Long.toHexString(subClusterOffset);
-                                }
-                            }
 
                             long fileDataOffset = clusterRegionStart + (item.firstCluster - 2) * clusterSize;
-                            FileType type = item.isDir ? FileType.UNKNOWN : FileTypeDetector.detectTypeByNameOrHeader(source, item.name, fileDataOffset, item.size);
+                            FileType type = item.isDir ? FileType.UNKNOWN : FileTypeDetector.detectTypeByName(item.name);
 
                             byte[] rawShortBytes = new byte[32];
                             System.arraycopy(clusterData, i, rawShortBytes, 0, 32);
@@ -323,7 +312,7 @@ public class FilesystemParser {
                             entries.add(entry);
                             batch.add(entry);
 
-                            if (batch.size() >= 1000) {
+                            if (batch.size() >= 2000) {
                                 if (callback != null) {
                                     callback.onBatchReady(new ArrayList<>(batch));
                                 }
@@ -337,11 +326,14 @@ public class FilesystemParser {
                                 queue.add(new WorkItem(item.firstCluster, assignedId, subPath));
                             }
                         }
+                            parsedUpTo = read - (read % 32);
+                        }
+                        if (chainBroken) break;
                     } catch (Exception clusterEx) {
                         DiagnosticReporter.logError(clusterEx, "Isolated failure processing cluster in FAT32");
                     }
 
-                    currentCluster = getNextFat32Cluster(fatTable, currentCluster);
+                    currentCluster = fatLookup.next(currentCluster);
                 }
             }
 
@@ -408,6 +400,71 @@ public class FilesystemParser {
             destPos += b.length;
         }
         return result;
+    }
+
+    /** ByteSource.readAt returns at most 64 KB per call and fills the buffer from index 0, so loop. */
+    private static int readFullyBestEffort(ByteSource source, long offset, byte[] dest, int len) {
+        byte[] piece = new byte[65536];
+        int done = 0;
+        while (done < len) {
+            int want = Math.min(piece.length, len - done);
+            int n;
+            try {
+                n = source.readAt(offset + done, piece, want);
+            } catch (IOException e) {
+                break;
+            }
+            if (n <= 0) break;
+            System.arraycopy(piece, 0, dest, done, n);
+            done += n;
+        }
+        return done;
+    }
+
+    /** How many more bytes of a directory cluster to read: 4 KB first, then up to 16 KB, then 64 KB steps. */
+    private static int nextPieceSize(int filled, int clusterSize) {
+        int target;
+        if (filled < 4096) target = 4096;
+        else if (filled < 16384) target = 16384;
+        else target = ((filled / 65536) + 1) * 65536;
+        return Math.max(32, Math.min(clusterSize, target) - filled);
+    }
+
+    /** FAT entry lookup: from the loaded table, or (for a very large FAT) straight from the card, 4 KB at a time. */
+    private static final class FatLookup {
+        private final ByteSource source;
+        private final long fatStartOffset;
+        private final byte[] table;
+        private final long fatBytes;
+        private final byte[] block = new byte[4096];
+        private long blockStart = -1;
+
+        FatLookup(ByteSource source, long fatStartOffset, byte[] table, long fatBytes) {
+            this.source = source;
+            this.fatStartOffset = fatStartOffset;
+            this.table = table;
+            this.fatBytes = fatBytes;
+        }
+
+        long next(long cluster) {
+            long index = cluster * 4;
+            if (index + 4 <= table.length) {
+                return ByteBuffer.wrap(table, (int) index, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0x0FFFFFFFL;
+            }
+            if (index + 4 > fatBytes) return 0x0FFFFFFF;
+            long start = index / 4096 * 4096;
+            try {
+                if (start != blockStart) {
+                    int want = (int) Math.min(4096, fatBytes - start);
+                    int n = source.readAt(fatStartOffset + start, block, want);
+                    if (n < want) return 0x0FFFFFFF;
+                    blockStart = start;
+                }
+                return ByteBuffer.wrap(block, (int) (index - start), 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0x0FFFFFFFL;
+            } catch (IOException e) {
+                return 0x0FFFFFFF;
+            }
+        }
     }
 
     private static long getNextFat32Cluster(byte[] fatTable, long cluster) {

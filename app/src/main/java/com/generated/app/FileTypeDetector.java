@@ -4,6 +4,25 @@ import java.io.IOException;
 
 public class FileTypeDetector {
 
+    /** Type from the file name only. Never reads from the card (one USB read per file made scans very slow). */
+    public static FileType detectTypeByName(String fileName) {
+        if (fileName == null || fileName.isEmpty()) return FileType.UNKNOWN;
+        int lastDot = fileName.lastIndexOf('.');
+        if (lastDot == -1 || lastDot == fileName.length() - 1) return FileType.UNKNOWN;
+        String e = fileName.substring(lastDot + 1).toLowerCase();
+        switch (e) {
+            case "jpg": case "jpeg": return FileType.JPEG;
+            case "png": return FileType.PNG;
+            case "gif": return FileType.GIF;
+            case "pdf": return FileType.PDF;
+            case "zip": case "apk": case "jar": return FileType.ZIP;
+            case "mp3": return FileType.MP3;
+            case "wav": return FileType.WAV;
+            case "mp4": case "m4a": return FileType.MP4;
+            default: return FileType.UNKNOWN;
+        }
+    }
+
     public static FileType detectTypeByNameOrHeader(ByteSource source, String fileName, long offset, long length) {
         if (fileName == null || fileName.isEmpty()) {
             return FileType.UNKNOWN;

@@ -20,11 +20,14 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.StrictMode;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -54,6 +57,17 @@ public class MainActivity extends Activity {
 
     private ByteSource currentByteSource;
     private CardInfoPanel cardInfoPanel;
+    private FrameLayout iconCircle;
+    private ImageView ivStatusIcon;
+    private ScanAnimationView connectAnim;
+    private ProgressBar connectBar;
+    private Button btnRetry;
+
+    // connection state of the card reader (opening the reader can take many seconds, so it runs in the background)
+    private int connectGeneration = 0;
+    private boolean connecting = false;
+    private String connectError = null;
+    private long connectStartMs = 0;
     private Uri currentUri;
     private UsbDevice currentUsbDevice;
 
@@ -88,6 +102,10 @@ public class MainActivity extends Activity {
                         currentByteSource.close();
                         currentByteSource = null;
                     }
+                    connectGeneration++;
+                    connecting = false;
+                    connectError = null;
+                    mainHandler.removeCallbacks(connectTicker);
                     currentUsbDevice = null;
                     updateUIState();
 
@@ -153,136 +171,152 @@ public class MainActivity extends Activity {
         requestNotificationPermissionIfNeeded();
 
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        getWindow().setStatusBarColor(0xFF0D47A1);
 
-        LinearLayout rootLayout = new LinearLayout(this);
-        rootLayout.setOrientation(LinearLayout.VERTICAL);
-        rootLayout.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
-        rootLayout.setBackgroundColor(0xFFF8F9FA);
+        final android.widget.ScrollView rootLayout = new android.widget.ScrollView(this);
+        rootLayout.setBackgroundColor(0xFFF4F7FB);
+        rootLayout.setFillViewport(true);
 
-        int padding = (int) (16 * getResources().getDisplayMetrics().density);
+        LinearLayout contentContainer = new LinearLayout(this);
+        contentContainer.setOrientation(LinearLayout.VERTICAL);
+        rootLayout.addView(contentContainer, new android.widget.ScrollView.LayoutParams(
+                android.widget.ScrollView.LayoutParams.MATCH_PARENT,
+                android.widget.ScrollView.LayoutParams.WRAP_CONTENT));
 
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(padding, padding, padding, padding);
-        topBar.setBackgroundColor(0xFFFFFFFF);
-        rootLayout.addView(topBar, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        // ---- header: gradient with the title and two small buttons
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setPadding(dp(20), dp(16), dp(20), dp(64));
+        GradientDrawable headerBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{0xFF0D47A1, 0xFF1E88E5});
+        headerBg.setCornerRadii(new float[]{0, 0, 0, 0, dp(28), dp(28), dp(28), dp(28)});
+        header.setBackground(headerBg);
+        contentContainer.addView(header, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        TextView tvTitle = new TextView(this);
-        tvTitle.setText(R.string.app_name);
-        tvTitle.setTextSize(22);
-        tvTitle.setTextColor(0xFF1976D2);
-        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
-        topBar.addView(tvTitle, titleLp);
+        LinearLayout topRow = new LinearLayout(this);
+        topRow.setOrientation(LinearLayout.HORIZONTAL);
+        topRow.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(topRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        Button btnHelp = new Button(this);
-        btnHelp.setText("מדריך");
-        btnHelp.setTextSize(14);
-        btnHelp.setTextColor(0xFF1976D2);
-        btnHelp.setBackgroundColor(0x00000000);
-        btnHelp.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                startActivity(new Intent(MainActivity.this, GuideActivity.class));
-            }
-        });
-        topBar.addView(btnHelp, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                (int)(48 * getResources().getDisplayMetrics().density)
-        ));
-
-        Button btnSettings = new Button(this);
-        btnSettings.setText("הגדרות");
-        btnSettings.setTextSize(14);
-        btnSettings.setTextColor(0xFF1976D2);
-        btnSettings.setBackgroundColor(0x00000000);
-        btnSettings.setOnClickListener(new View.OnClickListener() {
+        TextView btnSettings = makePill("הגדרות", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 startActivity(new Intent(MainActivity.this, SettingsActivity.class));
             }
         });
-        topBar.addView(btnSettings, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                (int)(48 * getResources().getDisplayMetrics().density)
-        ));
+        topRow.addView(btnSettings);
 
-        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
-        rootLayout.addView(scrollView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1.0f
-        ));
+        TextView btnHelp = makePill("מדריך", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, GuideActivity.class));
+            }
+        });
+        LinearLayout.LayoutParams helpLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        helpLp.leftMargin = dp(8);
+        topRow.addView(btnHelp, helpLp);
 
-        LinearLayout contentContainer = new LinearLayout(this);
-        contentContainer.setOrientation(LinearLayout.VERTICAL);
-        contentContainer.setPadding(padding, padding, padding, padding);
-        scrollView.addView(contentContainer, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        topRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1.0f));
 
-        cardStatusContainer = new LinearLayout(this);
-        cardStatusContainer.setOrientation(LinearLayout.VERTICAL);
-        cardStatusContainer.setPadding(padding, padding, padding, padding);
-        cardStatusContainer.setBackgroundColor(0xFFFFFFFF);
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText(R.string.app_name);
+        tvTitle.setTextSize(26);
+        tvTitle.setTextColor(0xFFFFFFFF);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        topRow.addView(tvTitle);
+
+        TextView tvTagline = new TextView(this);
+        tvTagline.setText("הצלת קבצים מכרטיס שמבקש פירמוט");
+        tvTagline.setTextSize(14);
+        tvTagline.setTextColor(0xD9FFFFFF);
+        tvTagline.setGravity(Gravity.RIGHT);
+        tvTagline.setTextDirection(View.TEXT_DIRECTION_RTL);
+        LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        tagLp.topMargin = dp(6);
+        header.addView(tvTagline, tagLp);
+
+        // ---- status card (overlaps the header)
+        cardStatusContainer = makeCard();
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        cardLp.bottomMargin = padding;
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cardLp.leftMargin = dp(16);
+        cardLp.rightMargin = dp(16);
+        cardLp.topMargin = -dp(44);
         contentContainer.addView(cardStatusContainer, cardLp);
 
-        ImageView ivCardIcon = new ImageView(this);
-        ivCardIcon.setImageResource(R.drawable.ic_sd_card);
-        ivCardIcon.setColorFilter(0xFF1976D2);
-        int iconSz = (int) (48 * getResources().getDisplayMetrics().density);
-        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSz, iconSz);
-        iconLp.bottomMargin = 12;
-        cardStatusContainer.addView(ivCardIcon, iconLp);
+        iconCircle = new FrameLayout(this);
+        GradientDrawable circleBg = new GradientDrawable();
+        circleBg.setShape(GradientDrawable.OVAL);
+        circleBg.setColor(0xFFE3F2FD);
+        iconCircle.setBackground(circleBg);
+        ivStatusIcon = new ImageView(this);
+        ivStatusIcon.setImageResource(R.drawable.ic_sd_card);
+        ivStatusIcon.setColorFilter(0xFF1976D2);
+        iconCircle.addView(ivStatusIcon, new FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER));
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(68), dp(68));
+        iconLp.gravity = Gravity.RIGHT;
+        iconLp.bottomMargin = dp(12);
+        cardStatusContainer.addView(iconCircle, iconLp);
+
+        connectAnim = new ScanAnimationView(this);
 
         tvStatusTitle = new TextView(this);
         tvStatusTitle.setText(R.string.connect_card_prompt);
-        tvStatusTitle.setTextSize(18);
-        tvStatusTitle.setTextColor(0xFF333333);
+        tvStatusTitle.setTextSize(20);
+        tvStatusTitle.setTextColor(0xFF1F2937);
         tvStatusTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvStatusTitle.setGravity(Gravity.RIGHT);
+        tvStatusTitle.setTextDirection(View.TEXT_DIRECTION_RTL);
         LinearLayout.LayoutParams stParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        stParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        stParams.bottomMargin = dp(6);
         cardStatusContainer.addView(tvStatusTitle, stParams);
 
         tvStatusSubtitle = new TextView(this);
         tvStatusSubtitle.setTextSize(14);
-        tvStatusSubtitle.setTextColor(0xFF757575);
+        tvStatusSubtitle.setTextColor(0xFF6B7280);
+        tvStatusSubtitle.setGravity(Gravity.RIGHT);
+        tvStatusSubtitle.setTextDirection(View.TEXT_DIRECTION_RTL);
         LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        subParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        subParams.bottomMargin = dp(12);
         cardStatusContainer.addView(tvStatusSubtitle, subParams);
+
+        connectBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        connectBar.setIndeterminate(true);
+        connectBar.setVisibility(View.GONE);
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(5));
+        barLp.bottomMargin = dp(8);
+        cardStatusContainer.addView(connectBar, barLp);
 
         cardInfoPanel = new CardInfoPanel(this);
         cardStatusContainer.addView(cardInfoPanel, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        btnScanCard = new Button(this);
-        btnScanCard.setText(R.string.scan_card_button);
-        btnScanCard.setTextColor(0xFFFFFFFF);
-        btnScanCard.setBackgroundColor(0xFF1976D2);
+        btnScanCard = makeButton(getString(R.string.scan_card_button), true);
         btnScanCard.setVisibility(View.GONE);
-        int btnPad = (int) (14 * getResources().getDisplayMetrics().density);
-        btnScanCard.setPadding(btnPad, btnPad, btnPad, btnPad);
         cardStatusContainer.addView(btnScanCard, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+
+        btnRetry = makeButton("נסה שוב", true);
+        btnRetry.setVisibility(View.GONE);
+        cardStatusContainer.addView(btnRetry, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+        btnRetry.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (currentUsbDevice != null) {
+                    loadUsbDevice(currentUsbDevice);
+                } else {
+                    checkForConnectedUsbDevice();
+                }
+            }
+        });
 
         btnScanCard.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -296,60 +330,51 @@ public class MainActivity extends Activity {
             }
         });
 
-        cardPreviousScanContainer = new LinearLayout(this);
-        cardPreviousScanContainer.setOrientation(LinearLayout.VERTICAL);
-        cardPreviousScanContainer.setPadding(padding, padding, padding, padding);
-        cardPreviousScanContainer.setBackgroundColor(0xFFFFFFFF);
+        // ---- previous scan card
+        cardPreviousScanContainer = makeCard();
         cardPreviousScanContainer.setVisibility(View.GONE);
         LinearLayout.LayoutParams prevCardLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        prevCardLp.bottomMargin = padding;
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        prevCardLp.leftMargin = dp(16);
+        prevCardLp.rightMargin = dp(16);
+        prevCardLp.topMargin = dp(16);
         contentContainer.addView(cardPreviousScanContainer, prevCardLp);
 
+        // NOTE: checkSavedScanStateOffMainThread() writes the details into the second TextView of this card
         TextView tvPrevTitle = new TextView(this);
         tvPrevTitle.setText(R.string.previous_scan_title);
-        tvPrevTitle.setTextSize(16);
+        tvPrevTitle.setTextSize(17);
         tvPrevTitle.setTextColor(0xFF1976D2);
         tvPrevTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvPrevTitle.setGravity(Gravity.RIGHT);
+        tvPrevTitle.setTextDirection(View.TEXT_DIRECTION_RTL);
         LinearLayout.LayoutParams ptParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        ptParams.bottomMargin = (int) (8 * getResources().getDisplayMetrics().density);
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ptParams.bottomMargin = dp(6);
         cardPreviousScanContainer.addView(tvPrevTitle, ptParams);
 
         final TextView tvPrevDetails = new TextView(this);
         tvPrevDetails.setTextSize(14);
-        tvPrevDetails.setTextColor(0xFF555555);
+        tvPrevDetails.setTextColor(0xFF4B5563);
+        tvPrevDetails.setGravity(Gravity.RIGHT);
+        tvPrevDetails.setTextDirection(View.TEXT_DIRECTION_RTL);
         LinearLayout.LayoutParams pdParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        pdParams.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        pdParams.bottomMargin = dp(14);
         cardPreviousScanContainer.addView(tvPrevDetails, pdParams);
 
         LinearLayout prevBtnLayout = new LinearLayout(this);
         prevBtnLayout.setOrientation(LinearLayout.HORIZONTAL);
         cardPreviousScanContainer.addView(prevBtnLayout, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        btnOpenResults = new Button(this);
-        btnOpenResults.setText(R.string.open_results);
-        btnOpenResults.setTextColor(0xFFFFFFFF);
-        btnOpenResults.setBackgroundColor(0xFF1976D2);
-        LinearLayout.LayoutParams bOpenLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
-        bOpenLp.rightMargin = 8;
-        prevBtnLayout.addView(btnOpenResults, bOpenLp);
+        btnScanAgain = makeButton(getString(R.string.scan_again), false);
+        LinearLayout.LayoutParams bAgainLp = new LinearLayout.LayoutParams(0, dp(50), 1.0f);
+        bAgainLp.rightMargin = dp(8);
+        prevBtnLayout.addView(btnScanAgain, bAgainLp);
 
-        btnScanAgain = new Button(this);
-        btnScanAgain.setText(R.string.scan_again);
-        btnScanAgain.setTextColor(0xFF333333);
-        btnScanAgain.setBackgroundColor(0xFFE0E0E0);
-        prevBtnLayout.addView(btnScanAgain, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+        btnOpenResults = makeButton(getString(R.string.open_results), true);
+        prevBtnLayout.addView(btnOpenResults, new LinearLayout.LayoutParams(0, dp(50), 1.0f));
 
         btnOpenResults.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -382,6 +407,21 @@ public class MainActivity extends Activity {
                 }).start();
             }
         });
+
+        // ---- tip
+        TextView tvTip = new TextView(this);
+        tvTip.setText("טיפ: כשאנדרואיד שואל איזו אפליקציה לפתוח בחיבור הקורא, בחר SD Rescue וסמן \"תמיד\".");
+        tvTip.setTextSize(13);
+        tvTip.setTextColor(0xFF6B7280);
+        tvTip.setGravity(Gravity.RIGHT);
+        tvTip.setTextDirection(View.TEXT_DIRECTION_RTL);
+        LinearLayout.LayoutParams tipLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        tipLp.leftMargin = dp(24);
+        tipLp.rightMargin = dp(24);
+        tipLp.topMargin = dp(18);
+        tipLp.bottomMargin = dp(24);
+        contentContainer.addView(tvTip, tipLp);
 
         setContentView(rootLayout);
         checkForConnectedUsbDevice();
@@ -420,56 +460,203 @@ public class MainActivity extends Activity {
         UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
         HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
         for (UsbDevice device : deviceList.values()) {
+            // already connected (or being opened) to this very reader: do not open it again on every onResume
+            if (currentUsbDevice != null && currentUsbDevice.getDeviceId() == device.getDeviceId()
+                    && (connecting || currentByteSource != null || connectError != null)) {
+                updateUIState();
+                return;
+            }
             loadUsbDevice(device);
-            break;
+            return;
         }
+        if (currentUsbDevice != null && !connecting) {
+            connectGeneration++;
+            if (currentByteSource != null) {
+                currentByteSource.close();
+                currentByteSource = null;
+            }
+            currentUsbDevice = null;
+            connectError = null;
+        }
+        updateUIState();
     }
 
     private void loadUsbDevice(final UsbDevice device) {
+        final int gen = ++connectGeneration;
         if (currentByteSource != null) {
             currentByteSource.close();
             currentByteSource = null;
         }
+        currentUri = null;
+        currentUsbDevice = device;
+        connecting = true;
+        connectError = null;
+        connectStartMs = System.currentTimeMillis();
 
-        try {
-            currentUri = null;
-            currentUsbDevice = device;
-            
-            UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
-            if (!usbManager.hasPermission(device)) {
-                Intent broadcastIntent = new Intent("com.generated.app.USB_PERMISSION");
-                broadcastIntent.setPackage(getPackageName());
-                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    flags |= PendingIntent.FLAG_MUTABLE;
-                }
-                PendingIntent pi = PendingIntent.getBroadcast(this, 0, broadcastIntent, flags);
-                usbManager.requestPermission(device, pi);
+        // show "reading the card" immediately; opening the reader can take a long time (permission, slow cards)
+        updateUIState();
+        mainHandler.removeCallbacks(connectTicker);
+        mainHandler.postDelayed(connectTicker, 1000);
+
+        final Context appContext = getApplicationContext();
+        new Thread(() -> {
+            UsbMassStorageSource opened = null;
+            String error = null;
+            try {
+                opened = new UsbMassStorageSource(appContext, device);
+            } catch (Throwable t) {
+                error = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
             }
+            final UsbMassStorageSource result = opened;
+            final String err = error;
+            mainHandler.post(() -> {
+                if (gen != connectGeneration || isFinishing() || isDestroyed()) {
+                    if (result != null) result.close();
+                    return;
+                }
+                connecting = false;
+                mainHandler.removeCallbacks(connectTicker);
+                if (result != null) {
+                    currentByteSource = result;
+                    connectError = null;
+                } else {
+                    connectError = err != null ? err : "unknown";
+                }
+                updateUIState();
+            });
+        }, "UsbOpen").start();
+    }
 
-            currentByteSource = new UsbMassStorageSource(this, device);
-            updateUIState();
+    private final Runnable connectTicker = new Runnable() {
+        @Override
+        public void run() {
+            if (!connecting) return;
+            long sec = (System.currentTimeMillis() - connectStartMs) / 1000;
+            if (tvStatusSubtitle != null) {
+                String text = "קורא את הכרטיס... " + sec + " שניות";
+                if (sec >= 10) text += "\nהכרטיס איטי להגיב, ממשיכים להמתין";
+                tvStatusSubtitle.setText(text);
+            }
+            mainHandler.postDelayed(this, 1000);
+        }
+    };
 
-        } catch (Exception e) {
-            currentUsbDevice = null;
-            updateUIState();
+    private void updateUIState() {
+        if (tvStatusTitle == null) return;
+        String name = (currentUsbDevice != null && currentUsbDevice.getProductName() != null)
+                ? currentUsbDevice.getProductName() : "USB Card Reader";
+
+        boolean noCard = currentUsbDevice == null;
+        boolean isConnecting = !noCard && connecting;
+        boolean isError = !noCard && !connecting && currentByteSource == null;
+        boolean isReady = !noCard && !connecting && currentByteSource != null;
+
+        setAnimationVisible(isConnecting);
+        connectBar.setVisibility(isConnecting ? View.VISIBLE : View.GONE);
+        iconCircle.setVisibility(isConnecting ? View.GONE : View.VISIBLE);
+        btnRetry.setVisibility(isError ? View.VISIBLE : View.GONE);
+        btnScanCard.setVisibility(isReady ? View.VISIBLE : View.GONE);
+
+        GradientDrawable circle = new GradientDrawable();
+        circle.setShape(GradientDrawable.OVAL);
+
+        if (noCard) {
+            circle.setColor(0xFFE3F2FD);
+            ivStatusIcon.setColorFilter(0xFF1976D2);
+            tvStatusTitle.setText(R.string.connect_card_prompt);
+            tvStatusSubtitle.setText("חבר קורא כרטיסים בכבל USB OTG, והאפליקציה תזהה אותו אוטומטית");
+            if (cardInfoPanel != null) cardInfoPanel.clear();
+        } else if (isConnecting) {
+            tvStatusTitle.setText(name);
+            long sec = (System.currentTimeMillis() - connectStartMs) / 1000;
+            tvStatusSubtitle.setText(sec < 2 ? "מזהה את הכרטיס..." : "קורא את הכרטיס... " + sec + " שניות");
+            if (cardInfoPanel != null) cardInfoPanel.clear();
+        } else if (isError) {
+            circle.setColor(0xFFFFF3E0);
+            ivStatusIcon.setColorFilter(0xFFEF6C00);
+            tvStatusTitle.setText("לא ניתן לקרוא את הכרטיס");
+            String err = connectError != null ? connectError : "";
+            String reason;
+            if (err.toLowerCase(Locale.ROOT).contains("permission")) {
+                reason = "לא אושרה הגישה להתקן. לחץ \"נסה שוב\" ואשר את החלון שנפתח.";
+            } else {
+                reason = "נסה לנתק ולחבר מחדש את הקורא, או לנסות כבל או קורא אחר.";
+            }
+            tvStatusSubtitle.setText(reason + (err.isEmpty() ? "" : "\n(" + err + ")"));
+            if (cardInfoPanel != null) cardInfoPanel.clear();
+        } else {
+            circle.setColor(0xFFE8F5E9);
+            ivStatusIcon.setColorFilter(0xFF2E7D32);
+            long size = currentByteSource.getSize();
+            tvStatusTitle.setText(name);
+            tvStatusSubtitle.setText("הכרטיס זוהה ומוכן לסריקה");
+            if (cardInfoPanel != null) cardInfoPanel.load(currentByteSource, name + ":" + size);
+        }
+        if (!isConnecting) iconCircle.setBackground(circle);
+    }
+
+    /** The animation view is attached only while it is needed, so its animator does not run in the background. */
+    private void setAnimationVisible(boolean visible) {
+        if (visible && connectAnim.getParent() == null) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(150));
+            lp.bottomMargin = dp(8);
+            cardStatusContainer.addView(connectAnim, 0, lp);
+        } else if (!visible && connectAnim.getParent() != null) {
+            cardStatusContainer.removeView(connectAnim);
         }
     }
 
-    private void updateUIState() {
-        if (currentUsbDevice != null && currentByteSource != null) {
-            String name = currentUsbDevice.getProductName() != null ? currentUsbDevice.getProductName() : "USB Card Reader";
-            long size = currentByteSource.getSize();
-            tvStatusTitle.setText(name);
-            tvStatusSubtitle.setText("גודל הכרטיס: " + formatSize(size));
-            btnScanCard.setVisibility(View.VISIBLE);
-            if (cardInfoPanel != null) cardInfoPanel.load(currentByteSource, name + ":" + size);
+    // ---- small UI helpers
+    private int dp(float v) {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private LinearLayout makeCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(20), dp(20), dp(20), dp(20));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFFFFFFFF);
+        bg.setCornerRadius(dp(20));
+        card.setBackground(bg);
+        card.setElevation(dp(4));
+        return card;
+    }
+
+    private Button makeButton(String text, boolean primary) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(16);
+        b.setTypeface(null, android.graphics.Typeface.BOLD);
+        b.setStateListAnimator(null);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(14));
+        if (primary) {
+            bg.setColor(0xFF1976D2);
+            b.setTextColor(0xFFFFFFFF);
         } else {
-            tvStatusTitle.setText(R.string.connect_card_prompt);
-            tvStatusSubtitle.setText("חבר קורא כרטיסים באמצעות USB OTG כדי להתחיל");
-            btnScanCard.setVisibility(View.GONE);
-            if (cardInfoPanel != null) cardInfoPanel.clear();
+            bg.setColor(0xFFFFFFFF);
+            bg.setStroke(dp(1.5f), 0xFF1976D2);
+            b.setTextColor(0xFF1976D2);
         }
+        b.setBackground(bg);
+        return b;
+    }
+
+    private TextView makePill(String text, View.OnClickListener l) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(14);
+        t.setTextColor(0xFFFFFFFF);
+        t.setPadding(dp(14), dp(8), dp(14), dp(8));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0x33FFFFFF);
+        bg.setCornerRadius(dp(18));
+        t.setBackground(bg);
+        t.setOnClickListener(l);
+        return t;
     }
 
     private void showUnfinishedRestoreDialog() {
@@ -717,6 +904,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        connectGeneration++;
+        mainHandler.removeCallbacks(connectTicker);
         if (currentByteSource != null) {
             currentByteSource.close();
             currentByteSource = null;
