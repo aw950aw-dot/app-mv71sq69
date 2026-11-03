@@ -58,6 +58,7 @@ public class RestoreService extends Service {
     private static int restoredFilesCount = 0;
     private static int failedFilesCount = 0;
     private static int skippedExistingFilesCount = 0;
+    private static int replacedFilesCount = 0;
     private static int foldersCreatedCount = 0;
     private static int foldersReusedCount = 0;
     private static int totalFilesCount = 0;
@@ -131,6 +132,7 @@ public class RestoreService extends Service {
                     restoredFilesCount = 0;
                     failedFilesCount = 0;
                     skippedExistingFilesCount = 0;
+                    replacedFilesCount = 0;
                     foldersCreatedCount = 0;
                     foldersReusedCount = 0;
                     currentBytesRestored = 0;
@@ -578,6 +580,7 @@ public class RestoreService extends Service {
         final boolean followChain = fat32Volume != null && node.getFirstCluster() >= 2;
 
         String sanitizedName = sanitizeFileName(node.getName());
+        boolean replacingExisting = false;
         DocumentFileCompat existing = parentDoc.findFile(sanitizedName);
         if (existing != null) {
             boolean sameSize = false;
@@ -593,6 +596,7 @@ public class RestoreService extends Service {
                     throw new Exception("לא ניתן להחליף את הקובץ הקיים (המחיקה נכשלה)");
                 }
                 parentDoc.forget(sanitizedName);
+                replacingExisting = true;
             } else if (conflictPolicy == POLICY_LEGACY && sameSize) {
                 return true;
             }
@@ -673,6 +677,7 @@ public class RestoreService extends Service {
             throw new Exception("File write failed validation.");
         }
 
+        if (replacingExisting) replacedFilesCount++;
         return false;
     }
 
@@ -701,6 +706,7 @@ public class RestoreService extends Service {
         Intent intent = new Intent(ACTION_PROGRESS);
         intent.putExtra("restored", restoredFilesCount);
         intent.putExtra("skipped", skippedExistingFilesCount);
+        intent.putExtra("replaced", replacedFilesCount);
         intent.putExtra("failed", failedFilesCount);
         intent.putExtra("total", totalFilesCount);
         intent.putExtra("percent", currentPercent);
@@ -768,6 +774,7 @@ public class RestoreService extends Service {
         intent.putExtra("success", success);
         intent.putExtra("failed", failed);
         intent.putExtra("skipped", skipped);
+        intent.putExtra("replaced", replacedFilesCount);
         intent.putExtra("folders_created", foldersCreatedCount);
         intent.putExtra("folders_reused", foldersReusedCount);
         sendBroadcast(intent);
