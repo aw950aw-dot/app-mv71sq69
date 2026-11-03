@@ -158,9 +158,10 @@ public class ScanActivity extends Activity {
                     int success = intent.getIntExtra("success", 0);
                     int failed = intent.getIntExtra("failed", 0);
                     int skipped = intent.getIntExtra("skipped", 0);
+                    int replaced = intent.getIntExtra("replaced", 0);
                     int foldersCreated = intent.getIntExtra("folders_created", 0);
                     int foldersReused = intent.getIntExtra("folders_reused", 0);
-                    showRestoreSummaryDialogAfterService(success, failed, skipped, foldersCreated, foldersReused);
+                    showRestoreSummaryDialogAfterService(success, failed, skipped, replaced, foldersCreated, foldersReused);
                 }
             } catch (Exception ignored) {}
         }
@@ -1271,7 +1272,7 @@ public class ScanActivity extends Activity {
         }).start();
     }
 
-    private void showRestoreSummaryDialogAfterService(int success, int failed, int skipped, int foldersCreated, int foldersReused) {
+    private void showRestoreSummaryDialogAfterService(int success, int failed, int skipped, int replaced, int foldersCreated, int foldersReused) {
         StringBuilder sb = new StringBuilder();
         sb.append("סיכום תהליך שחזור:\n\n");
         sb.append("• קבצים ששוחזרו בהצלחה: ").append(success).append("\n");
