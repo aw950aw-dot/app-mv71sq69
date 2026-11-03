@@ -94,6 +94,20 @@ public class DocumentFileCompat {
         return map;
     }
 
+    /** Deletes this document (used when the user chooses to replace an existing file). */
+    public boolean delete() {
+        try {
+            return DocumentsContract.deleteDocument(context.getContentResolver(), uri);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Removes a name from the cached folder listing (after the file was deleted). */
+    public void forget(String displayName) {
+        if (childCache != null && displayName != null) childCache.remove(displayName);
+    }
+
     private void remember(String displayName, Uri created) {
         if (childCache == null || displayName == null || created == null) return;
         try {

@@ -95,55 +95,6 @@ public class SettingsActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        // SECTION 1: כללי (General)
-        addSectionHeader(content, "כללי");
-
-        LinearLayout cardGeneral = createCardContainer(content);
-
-        TextView tvCpLabel = new TextView(this);
-        tvCpLabel.setText("קוד פייג׳ לשמות קצרים (8.3):");
-        tvCpLabel.setTextSize(14);
-        tvCpLabel.setTextColor(0xFF333333);
-        cardGeneral.addView(tvCpLabel);
-
-        final Spinner spinnerCp = new Spinner(this);
-        String[] cpOptions = new String[]{"CP862", "Windows-1255", "CP437"};
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, cpOptions);
-        spinnerCp.setAdapter(adapter);
-
-        String current = CodepageDecoder.getCodepage();
-        for (int i = 0; i < cpOptions.length; i++) {
-            if (cpOptions[i].equalsIgnoreCase(current)) {
-                spinnerCp.setSelection(i);
-                break;
-            }
-        }
-        LinearLayout.LayoutParams spinParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        spinParams.topMargin = 8;
-        spinParams.bottomMargin = 16;
-        cardGeneral.addView(spinnerCp, spinParams);
-
-        final CheckBox cbKeepScreenOn = new CheckBox(this);
-        cbKeepScreenOn.setText("השאר מסך דולק בזמן סריקה");
-        cbKeepScreenOn.setChecked(true);
-        cbKeepScreenOn.setTextSize(14);
-        cardGeneral.addView(cbKeepScreenOn);
-
-        final CheckBox cbNotifications = new CheckBox(this);
-        cbNotifications.setText("התראות שירות ברקע");
-        cbNotifications.setChecked(true);
-        cbNotifications.setTextSize(14);
-        LinearLayout.LayoutParams cb2Params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        cb2Params.topMargin = 8;
-        cardGeneral.addView(cbNotifications, cb2Params);
-
-
         // SECTION 2: אחסון (Storage)
         addSectionHeader(content, "אחסון");
 
@@ -220,6 +171,44 @@ public class SettingsActivity extends Activity {
             }
         });
 
+        TextView tvAdvIntro = new TextView(this);
+        tvAdvIntro.setText("הגדרות אלה מיועדות לבדיקות ולאבחון. בשימוש רגיל אין צורך לשנות אותן.");
+        tvAdvIntro.setTextSize(13);
+        tvAdvIntro.setTextColor(0xFF666666);
+        advancedContainer.addView(tvAdvIntro);
+
+        TextView tvCpLabel = new TextView(this);
+        tvCpLabel.setText("קידוד שמות קבצים ישנים:");
+        tvCpLabel.setTextSize(14);
+        tvCpLabel.setTextColor(0xFF333333);
+        LinearLayout.LayoutParams cpLblLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cpLblLp.topMargin = 24;
+        advancedContainer.addView(tvCpLabel, cpLblLp);
+
+        TextView tvCpHelp = new TextView(this);
+        tvCpHelp.setText("משפיע רק על קבצים ישנים שיש להם שם קצר בלבד (כמו ABC~1.MP3). אם שמות הקבצים בעברית מוצגים נכון, אל תשנה.");
+        tvCpHelp.setTextSize(12);
+        tvCpHelp.setTextColor(0xFF888888);
+        advancedContainer.addView(tvCpHelp);
+
+        final Spinner spinnerCp = new Spinner(this);
+        String[] cpOptions = new String[]{"CP862", "Windows-1255", "CP437"};
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, cpOptions);
+        spinnerCp.setAdapter(adapter);
+        String current = CodepageDecoder.getCodepage();
+        for (int i = 0; i < cpOptions.length; i++) {
+            if (cpOptions[i].equalsIgnoreCase(current)) {
+                spinnerCp.setSelection(i);
+                break;
+            }
+        }
+        LinearLayout.LayoutParams spinParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        spinParams.topMargin = 8;
+        spinParams.bottomMargin = 16;
+        advancedContainer.addView(spinnerCp, spinParams);
+
         tvImageSourceInfo = new TextView(this);
         tvImageSourceInfo.setTextSize(13);
         tvImageSourceInfo.setTextColor(0xFF666666);
@@ -227,7 +216,7 @@ public class SettingsActivity extends Activity {
         advancedContainer.addView(tvImageSourceInfo);
 
         Button btnSelectImage = new Button(this);
-        btnSelectImage.setText(R.string.select_image_file);
+        btnSelectImage.setText("בחר קובץ דיסק לבדיקות (.img)");
         btnSelectImage.setTextColor(0xFFFFFFFF);
         btnSelectImage.setBackgroundColor(0xFF00838F);
         btnSelectImage.setOnClickListener(v -> {
@@ -276,7 +265,7 @@ public class SettingsActivity extends Activity {
 
         // Performance log section in Advanced
         TextView tvPerfHeader = new TextView(this);
-        tvPerfHeader.setText("20 פעולות DB וטעינה איטיות ביותר (>100ms):");
+        tvPerfHeader.setText("פעולות איטיות באפליקציה (לאבחון בלבד):");
         tvPerfHeader.setTextSize(14);
         tvPerfHeader.setTextColor(0xFF1976D2);
         tvPerfHeader.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -299,19 +288,9 @@ public class SettingsActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        final CheckBox cbDeepScan = new CheckBox(this);
-        cbDeepScan.setText(R.string.setting_deep_scan);
-        cbDeepScan.setChecked(true);
-        cbDeepScan.setTextSize(14);
-        LinearLayout.LayoutParams cbDeepLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        cbDeepLp.topMargin = 12;
-        advancedContainer.addView(cbDeepScan, cbDeepLp);
 
         Button btnTestRestore = new Button(this);
-        btnTestRestore.setText("Test Restore (בדיקת שחזור)");
+        btnTestRestore.setText("בדיקת שחזור של קובץ אחד (לבדיקה בלבד)");
         btnTestRestore.setTextColor(0xFFFFFFFF);
         btnTestRestore.setBackgroundColor(0xFF1976D2);
         btnTestRestore.setOnClickListener(v -> Toast.makeText(SettingsActivity.this, "Test Restore completed successfully.", Toast.LENGTH_SHORT).show());
@@ -462,9 +441,9 @@ public class SettingsActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences("sd_rescue_prefs", MODE_PRIVATE);
         String uriStr = prefs.getString("pref_image_source_uri", null);
         if (uriStr != null) {
-            tvImageSourceInfo.setText("קובץ אימג׳ נוכחי: " + uriStr);
+            tvImageSourceInfo.setText("קובץ דיסק לבדיקות: " + uriStr);
         } else {
-            tvImageSourceInfo.setText("קובץ אימג׳ נוכחי: לא נבחר (ברירת מחדל: USB OTG)");
+            tvImageSourceInfo.setText("קובץ דיסק לבדיקות: לא נבחר (ברירת מחדל: קורא הכרטיסים)");
         }
     }
 

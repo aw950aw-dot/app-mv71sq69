@@ -64,7 +64,7 @@ public class MainActivity extends Activity {
     private Button btnRetry;
 
     // connection state of the card reader (opening the reader can take many seconds, so it runs in the background)
-    private int connectGeneration = 0;
+    private volatile int connectGeneration = 0;
     private boolean connecting = false;
     private String connectError = null;
     private long connectStartMs = 0;
@@ -502,10 +502,21 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             UsbMassStorageSource opened = null;
             String error = null;
-            try {
-                opened = new UsbMassStorageSource(appContext, device);
-            } catch (Throwable t) {
-                error = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
+            // A reader that was just plugged in often fails the first time (the card is not ready yet).
+            // Try up to 3 times before showing an error. Never retry a permission refusal.
+            for (int attempt = 1; attempt <= 3 && opened == null; attempt++) {
+                try {
+                    opened = new UsbMassStorageSource(appContext, device);
+                } catch (Throwable t) {
+                    error = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
+                    boolean permissionProblem = error.toLowerCase(Locale.ROOT).contains("permission");
+                    if (permissionProblem || attempt == 3 || gen != connectGeneration) break;
+                    try {
+                        Thread.sleep(1500);
+                    } catch (InterruptedException ie) {
+                        break;
+                    }
+                }
             }
             final UsbMassStorageSource result = opened;
             final String err = error;

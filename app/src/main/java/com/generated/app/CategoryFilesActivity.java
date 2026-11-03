@@ -381,12 +381,12 @@ public class CategoryFilesActivity extends Activity {
                     prefs.edit().putString(PREF_DEST_URI, treeUri.toString()).apply();
                 } catch (Exception ignored) {}
 
-                executeCategoryRestore(treeUri);
+                RestoreUtils.askConflictPolicy(this, policy -> executeCategoryRestore(treeUri, policy));
             }
         }
     }
 
-    private void executeCategoryRestore(final Uri treeUri) {
+    private void executeCategoryRestore(final Uri treeUri, final int conflictPolicy) {
         final List<RecoveredEntry> filesToRestore = new ArrayList<>();
         for (RecoveredEntry e : filteredEntries) {
             if (e.isSelected()) {
@@ -404,7 +404,7 @@ public class CategoryFilesActivity extends Activity {
                 dbHelper.setNodeAndSubtreeSelected(e, 1);
             }
 
-            RestoreUtils.startRestoreService(CategoryFilesActivity.this, treeUri, false, sourceUri, usbDeviceName);
+            RestoreUtils.startRestoreService(CategoryFilesActivity.this, treeUri, false, sourceUri, usbDeviceName, conflictPolicy);
 
             new Handler(Looper.getMainLooper()).post(() -> {
                 Toast.makeText(CategoryFilesActivity.this, "השחזור החל ברקע עבור קבצי הקטגוריה", Toast.LENGTH_LONG).show();

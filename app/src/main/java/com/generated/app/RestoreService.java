@@ -31,6 +31,11 @@ public class RestoreService extends Service {
     public static final String EXTRA_URI = "extra_uri";
     public static final String EXTRA_USB_DEVICE_NAME = "extra_usb_device_name";
     public static final String EXTRA_RESUME = "extra_resume";
+    public static final String EXTRA_CONFLICT_POLICY = "extra_conflict_policy";
+    public static final int POLICY_SKIP = 0;        // an existing file is kept, the card file is not restored
+    public static final int POLICY_REPLACE = 1;     // the existing file is deleted and restored again
+    public static final int POLICY_KEEP_BOTH = 2;   // the new file gets a unique name
+    public static final int POLICY_LEGACY = 3;      // resume: skip only if the existing file has the same size
 
     public static final String ACTION_PROGRESS = "com.generated.app.RESTORE_PROGRESS";
     public static final String ACTION_COMPLETED = "com.generated.app.RESTORE_COMPLETED";
@@ -47,6 +52,7 @@ public class RestoreService extends Service {
     private Fat32Volume fat32Volume;      // lets us follow the cluster chain of fragmented files
     private boolean volumeProbed = false;
     private volatile boolean isCancelled = false;
+    private volatile int conflictPolicy = POLICY_LEGACY;
 
     private static volatile boolean isRestoreRunning = false;
     private static int restoredFilesCount = 0;
@@ -115,6 +121,7 @@ public class RestoreService extends Service {
             Uri treeUri = intent.getParcelableExtra(EXTRA_TREE_URI);
             boolean saveAll = intent.getBooleanExtra(EXTRA_SAVE_ALL, true);
             boolean isResume = intent.getBooleanExtra(EXTRA_RESUME, false);
+            conflictPolicy = intent.getIntExtra(EXTRA_CONFLICT_POLICY, POLICY_LEGACY);
             Uri sourceUri = intent.getParcelableExtra(EXTRA_URI);
             String usbDeviceName = intent.getStringExtra(EXTRA_USB_DEVICE_NAME);
 
@@ -567,12 +574,23 @@ public class RestoreService extends Service {
         String sanitizedName = sanitizeFileName(node.getName());
         DocumentFileCompat existing = parentDoc.findFile(sanitizedName);
         if (existing != null) {
+            boolean sameSize = false;
             try {
                 long existingLen = existing.getLength();
-                if (existingLen == node.getLength() && existingLen >= 0) {
-                    return true;
-                }
+                sameSize = existingLen == node.getLength() && existingLen >= 0;
             } catch (Exception ignored) {}
+
+            if (conflictPolicy == POLICY_SKIP) {
+                return true;                                   // keep the existing file
+            } else if (conflictPolicy == POLICY_REPLACE) {
+                if (!existing.delete()) {
+                    throw new Exception("לא ניתן להחליף את הקובץ הקיים (המחיקה נכשלה)");
+                }
+                parentDoc.forget(sanitizedName);
+            } else if (conflictPolicy == POLICY_LEGACY && sameSize) {
+                return true;
+            }
+            // POLICY_KEEP_BOTH (and LEGACY with a different size): createFile below gives the new file a unique name
         }
 
         byte[] firstChunk = new byte[(int) Math.min(node.getLength(), followChain ? 4096L : 65536L)];

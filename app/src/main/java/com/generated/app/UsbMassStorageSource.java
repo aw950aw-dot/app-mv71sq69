@@ -174,8 +174,16 @@ public class UsbMassStorageSource implements ByteSource {
                 throw new IOException("Failed to claim USB interface");
             }
 
-            getMaxLun();
-            initStorageCommandsWithRetry();
+            try {
+                getMaxLun();
+                initStorageCommandsWithRetry();
+            } catch (Exception initError) {
+                try { connection.releaseInterface(usbInterface); } catch (Exception ignored) {}
+                try { connection.close(); } catch (Exception ignored) {}
+                connection = null;
+                if (initError instanceof IOException) throw (IOException) initError;
+                throw new IOException(initError);
+            }
         } finally {
             usbLock.unlock();
         }

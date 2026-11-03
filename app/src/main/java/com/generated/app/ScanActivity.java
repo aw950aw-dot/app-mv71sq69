@@ -337,16 +337,20 @@ public class ScanActivity extends Activity {
         tvScanStatus.setTextColor(0xFF333333);
         tvScanStatus.setTypeface(null, android.graphics.Typeface.BOLD);
         tvScanStatus.setGravity(Gravity.CENTER);
+        // fixed height (2 lines) so the buttons below never jump when the folder name changes
+        tvScanStatus.setLines(2);
+        tvScanStatus.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         LinearLayout.LayoutParams stLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         stLp.bottomMargin = 8;
         layoutScanScreen.addView(tvScanStatus, stLp);
 
         tvScanLiveCounters = new TextView(this);
-        tvScanLiveCounters.setText("תיקיות: 0 · קבצים: 0 · זמן שעבר: 00:00");
+        tvScanLiveCounters.setText("תיקיות: 0 · קבצים: 0\nזמן שעבר: 00:00");
         tvScanLiveCounters.setTextSize(14);
         tvScanLiveCounters.setTextColor(0xFF757575);
         tvScanLiveCounters.setGravity(Gravity.CENTER);
+        tvScanLiveCounters.setLines(2);
         LinearLayout.LayoutParams cntLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         cntLp.bottomMargin = (int) (16 * getResources().getDisplayMetrics().density);
@@ -495,7 +499,7 @@ public class ScanActivity extends Activity {
                 (int)(48 * getResources().getDisplayMetrics().density)));
 
         btnMenuResults = new Button(this);
-        btnMenuResults.setText("אפשרויות");
+        btnMenuResults.setText("פרטי סריקה");
         btnMenuResults.setTextSize(14);
         btnMenuResults.setTextColor(0xFF333333);
         btnMenuResults.setBackgroundColor(0x00000000);
@@ -919,7 +923,7 @@ public class ScanActivity extends Activity {
         long elapsedSec = (System.currentTimeMillis() - scanStartTime) / 1000;
         String elapsedStr = String.format(Locale.getDefault(), "%02d:%02d", elapsedSec / 60, elapsedSec % 60);
         if (tvScanLiveCounters != null) {
-            tvScanLiveCounters.setText(String.format(Locale.getDefault(), "תיקיות: %d · קבצים: %d · זמן שעבר: %s", folders, files, elapsedStr));
+            tvScanLiveCounters.setText(String.format(Locale.getDefault(), "תיקיות: %d · קבצים: %d\nזמן שעבר: %s", folders, files, elapsedStr));
         }
         if (folder != null && tvScanStatus != null) {
             tvScanStatus.setText("סורק: " + folder);
@@ -1207,7 +1211,7 @@ public class ScanActivity extends Activity {
                     prefs.edit().putString(PREF_DEST_URI, treeUri.toString()).apply();
                 } catch (Exception ignored) {}
 
-                startRestoreService(treeUri, saveAllModeFlag);
+                RestoreUtils.askConflictPolicy(this, policy -> startRestoreService(treeUri, saveAllModeFlag, policy));
             }
         } else if (requestCode == REQUEST_CODE_SAVE_REPORT && resultCode == RESULT_OK) {
             if (data != null && data.getData() != null) {
@@ -1230,9 +1234,9 @@ public class ScanActivity extends Activity {
         }).start();
     }
 
-    private void startRestoreService(Uri treeUri, boolean saveAll) {
+    private void startRestoreService(Uri treeUri, boolean saveAll, int conflictPolicy) {
         Toast.makeText(this, "מתחיל שחזור קבצים ברקע...", Toast.LENGTH_SHORT).show();
-        RestoreUtils.startRestoreService(this, treeUri, saveAll, sourceUri, usbDeviceName);
+        RestoreUtils.startRestoreService(this, treeUri, saveAll, sourceUri, usbDeviceName, conflictPolicy);
     }
 
     private void showScanDetailsDialog() {
