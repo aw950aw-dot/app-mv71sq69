@@ -754,7 +754,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new Object[]{selectedState, entry.getPath(), entry.getName()});
 
             if (entry.isDirectory()) {
-                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + " LIKE ?", new Object[]{selectedState, fullPath + "%"});
+                String escapedPath = fullPath.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + "=? OR " + COL_PATH + " LIKE ? ESCAPE '\\'", new Object[]{selectedState, fullPath, escapedPath + "/%"});
             }
 
             updateAncestorStates(db, entry.getPath());
