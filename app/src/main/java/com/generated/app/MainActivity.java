@@ -219,14 +219,17 @@ public class MainActivity extends Activity {
         helpLp.leftMargin = dp(8);
         topRow.addView(btnHelp, helpLp);
 
-        topRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1.0f));
-
         TextView tvTitle = new TextView(this);
         tvTitle.setText(R.string.app_name);
         tvTitle.setTextSize(28);
         tvTitle.setTextColor(0xFFFFFFFF);
         tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        topRow.addView(tvTitle);
+        tvTitle.setSingleLine(true);
+        tvTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tvTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        titleLp.leftMargin = dp(8);
+        topRow.addView(tvTitle, titleLp);
 
         TextView tvTagline = new TextView(this);
         tvTagline.setText("הצלת קבצים מכרטיס שמבקש פירמוט");
