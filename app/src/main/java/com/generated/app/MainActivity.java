@@ -194,11 +194,25 @@ public class MainActivity extends Activity {
         contentContainer.addView(header, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText(R.string.app_name);
+        tvTitle.setTextSize(30);
+        tvTitle.setTextColor(0xFFFFFFFF);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvTitle.setSingleLine(true);
+        tvTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tvTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        tvTitle.setTextDirection(View.TEXT_DIRECTION_RTL);
+        header.addView(tvTitle, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
         LinearLayout topRow = new LinearLayout(this);
         topRow.setOrientation(LinearLayout.HORIZONTAL);
-        topRow.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(topRow, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        topRow.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams topRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        topRowLp.topMargin = dp(12);
+        header.addView(topRow, topRowLp);
 
         TextView btnSettings = makePill("הגדרות", new View.OnClickListener() {
             @Override
@@ -218,18 +232,6 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         helpLp.leftMargin = dp(8);
         topRow.addView(btnHelp, helpLp);
-
-        TextView tvTitle = new TextView(this);
-        tvTitle.setText(R.string.app_name);
-        tvTitle.setTextSize(28);
-        tvTitle.setTextColor(0xFFFFFFFF);
-        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvTitle.setSingleLine(true);
-        tvTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        tvTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
-        titleLp.leftMargin = dp(8);
-        topRow.addView(tvTitle, titleLp);
 
         TextView tvTagline = new TextView(this);
         tvTagline.setText("הצלת קבצים מכרטיס שמבקש פירמוט");
