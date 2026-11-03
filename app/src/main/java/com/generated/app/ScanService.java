@@ -287,7 +287,8 @@ public class ScanService extends Service {
                     FilesystemParser.parseFilesystem(byteSource, new FilesystemParser.ParserCallback() {
                         @Override
                         public void onBatchReady(List<RecoveredEntry> batch) {
-                            if (batch != null && !batch.isEmpty()) {
+                            if (isCancelled || batch == null || batch.isEmpty()) return;
+                            if (!batch.isEmpty()) {
                                 dbHelper.insertEntriesInBatch(batch);
                                 for (RecoveredEntry entry : batch) {
                                     if (entry.isDirectory()) {
@@ -304,6 +305,7 @@ public class ScanService extends Service {
 
                         @Override
                         public void onProgress(String currentFolder) {
+                            if (isCancelled) return;
                             while (isPaused && !isCancelled) {
                                 try { Thread.sleep(500); } catch (InterruptedException e) { break; }
                             }
@@ -315,6 +317,7 @@ public class ScanService extends Service {
                             throttleNotificationIndeterminate();
                         }
                     });
+                    if (isCancelled) throw new InterruptedException("Scan cancelled");
 
                     dbHelper.recreateAllIndexes();
 
@@ -324,6 +327,8 @@ public class ScanService extends Service {
                     foldersCount.set(totalFolders);
                     DiagnosticReporter.setFilesFoldersCounts(totalFiles, totalFolders);
                     DiagnosticReporter.log("הסריקה הסתיימה בהצלחה. סה\"כ קבצים: " + totalFiles + ", תיקיות: " + totalFolders);
+
+                    if (isCancelled) throw new InterruptedException("Scan cancelled");
 
                     if (totalFiles == 0) {
                         DiagnosticReporter.log("Filesystem scan found no files, running deep scan");
@@ -381,6 +386,8 @@ public class ScanService extends Service {
                         });
                     }
 
+                    if (isCancelled) throw new InterruptedException("Scan cancelled");
+
                     dbHelper.computeAndStoreFolderTotals();
                     dbHelper.updateJobState("scan", "COMPLETED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
                     DiagnosticReporter.saveSummaryToDb(ScanService.this);
@@ -396,10 +403,15 @@ public class ScanService extends Service {
                     } catch (Exception ignored) {}
 
                 } catch (Exception e) {
-                    DiagnosticReporter.logError(e, "Scan thread exception caught.");
-                    dbHelper.recreateAllIndexes();
-                    dbHelper.updateJobState("scan", "INTERRUPTED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
-                    ServiceState.getInstance().update(ServiceState.Phase.IDLE, filesCount.get(), foldersCount.get(), totalBytesScanned.get(), currentFolderPath, 0, "", e.getMessage());
+                    if (isCancelled) {
+                        dbHelper.updateJobState("scan", "CANCELLED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
+                        ServiceState.getInstance().update(ServiceState.Phase.CANCELLED, filesCount.get(), foldersCount.get(), totalBytesScanned.get(), currentFolderPath, 0, "", "סריקה בוטלה");
+                    } else {
+                        DiagnosticReporter.logError(e, "Scan thread exception caught.");
+                        dbHelper.recreateAllIndexes();
+                        dbHelper.updateJobState("scan", "INTERRUPTED", scanStartTime, System.currentTimeMillis(), foldersCount.get(), filesCount.get(), totalBytesScanned.get());
+                        ServiceState.getInstance().update(ServiceState.Phase.IDLE, filesCount.get(), foldersCount.get(), totalBytesScanned.get(), currentFolderPath, 0, "", e.getMessage());
+                    }
                 } finally {
                     isScanRunning = false;
                     int totalFiles = dbHelper.getTotalFilesCount();
@@ -408,8 +420,10 @@ public class ScanService extends Service {
                     foldersCount.set(totalFolders);
                     DiagnosticReporter.setFilesFoldersCounts(totalFiles, totalFolders);
                     DiagnosticReporter.saveSummaryToDb(ScanService.this);
-                    ServiceState.getInstance().update(ServiceState.Phase.SCAN_COMPLETED, totalFiles, totalFolders, totalBytesScanned.get(), currentFolderPath, 100, "", "");
-                    broadcastCompleted(totalFiles);
+                    if (!isCancelled) {
+                        ServiceState.getInstance().update(ServiceState.Phase.SCAN_COMPLETED, totalFiles, totalFolders, totalBytesScanned.get(), currentFolderPath, 100, "", "");
+                        broadcastCompleted(totalFiles);
+                    }
                     if (byteSource != null) {
                         byteSource.close();
                     }
