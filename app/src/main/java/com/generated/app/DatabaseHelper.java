@@ -804,6 +804,39 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
+    public synchronized void setDirectoryContentsSelected(long parentId, int selectedState) {
+        SQLiteDatabase db = getWritableDatabase();
+        long start = System.currentTimeMillis();
+        db.beginTransaction();
+        try {
+            ArrayList<Long> pending = new ArrayList<>();
+            Cursor roots = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=?",
+                    new String[]{String.valueOf(parentId)});
+            try {
+                while (roots.moveToNext()) pending.add(roots.getLong(0));
+            } finally {
+                roots.close();
+            }
+
+            for (int i = 0; i < pending.size(); i++) {
+                long nodeId = pending.get(i);
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_ID + "=?",
+                        new Object[]{selectedState, nodeId});
+                Cursor children = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? AND " + COL_IS_DIR + "=1",
+                        new String[]{String.valueOf(nodeId)});
+                try {
+                    while (children.moveToNext()) pending.add(children.getLong(0));
+                } finally {
+                    children.close();
+                }
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+            PerformanceLogger.record("setDirectoryContentsSelected", System.currentTimeMillis() - start);
+        }
+    }
+
     public synchronized void setAllSelected(boolean selected) {
         long start = System.currentTimeMillis();
         SQLiteDatabase db = getWritableDatabase();
