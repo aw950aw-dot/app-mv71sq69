@@ -137,7 +137,7 @@ public class FilesystemParser {
             int reserved = b.getShort(14) & 0xFFFF;
             int numFATs = b.get(16) & 0xFF;
             long sectorsPerFAT = b.getInt(36) & 0xFFFFFFFFL;
-            long rootCluster = b.getInt(44) & 0xFFFF;
+            long rootCluster = b.getInt(44) & 0x0FFFFFFFL;
 
             return (bytesPerSector == 512 || bytesPerSector == 1024 || bytesPerSector == 2048 || bytesPerSector == 4096) &&
                     sectorsPerCluster > 0 && reserved > 0 && numFATs > 0 && sectorsPerFAT > 0 && rootCluster >= 2;
@@ -158,7 +158,7 @@ public class FilesystemParser {
             int reserved = b.getShort(14) & 0xFFFF;
             int numFATs = b.get(16) & 0xFF;
             long sectorsPerFAT = b.getInt(36) & 0xFFFFFFFFL;
-            long rootCluster = b.getInt(44) & 0xFFFF;
+            long rootCluster = b.getInt(44) & 0x0FFFFFFFL;
 
             long fatStartOffset = partOffset + (long) reserved * bytesPerSector;
             long clusterRegionStart = partOffset + ((long) reserved + (long) numFATs * sectorsPerFAT) * bytesPerSector;

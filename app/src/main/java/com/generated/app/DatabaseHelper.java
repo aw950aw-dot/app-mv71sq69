@@ -754,7 +754,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new Object[]{selectedState, entry.getPath(), entry.getName()});
 
             if (entry.isDirectory()) {
-                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + " LIKE ?", new Object[]{selectedState, fullPath + "%"});
+                String escapedPath = fullPath.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + "=? OR " + COL_PATH + " LIKE ? ESCAPE '\\'", new Object[]{selectedState, fullPath, escapedPath + "/%"});
             }
 
             updateAncestorStates(db, entry.getPath());
@@ -800,6 +801,39 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
 
             db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_PATH + "=? AND " + COL_NAME + "=?", new Object[]{newState, parentPath, part});
+        }
+    }
+
+    public synchronized void setDirectoryContentsSelected(long parentId, int selectedState) {
+        SQLiteDatabase db = getWritableDatabase();
+        long start = System.currentTimeMillis();
+        db.beginTransaction();
+        try {
+            ArrayList<Long> pending = new ArrayList<>();
+            Cursor roots = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=?",
+                    new String[]{String.valueOf(parentId)});
+            try {
+                while (roots.moveToNext()) pending.add(roots.getLong(0));
+            } finally {
+                roots.close();
+            }
+
+            for (int i = 0; i < pending.size(); i++) {
+                long nodeId = pending.get(i);
+                db.execSQL("UPDATE " + TABLE_NODES + " SET " + COL_SELECTED + "=? WHERE " + COL_ID + "=?",
+                        new Object[]{selectedState, nodeId});
+                Cursor children = db.rawQuery("SELECT " + COL_ID + " FROM " + TABLE_NODES + " WHERE " + COL_PARENT_ID + "=? AND " + COL_IS_DIR + "=1",
+                        new String[]{String.valueOf(nodeId)});
+                try {
+                    while (children.moveToNext()) pending.add(children.getLong(0));
+                } finally {
+                    children.close();
+                }
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+            PerformanceLogger.record("setDirectoryContentsSelected", System.currentTimeMillis() - start);
         }
     }
 
@@ -888,58 +922,36 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         List<RecoveredEntry> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
 
-        List<Long> selectedIds = new ArrayList<>();
-        Set<Long> ancestorIds = new HashSet<>();
-
-        Cursor cSel = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", NULL, " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_SELECTED + ">0 OR " + COL_IS_DIR + "=1", null);
-        
+        // Load all directories and selected nodes first. The cursor's row order is not
+        // guaranteed to be parent-before-child, so ancestor traversal must happen afterward.
         Map<Long, RecoveredEntry> nodeMap = new HashMap<>();
-        if (cSel != null) {
-            while (cSel.moveToNext()) {
-                RecoveredEntry entry = cursorToEntry(cSel);
+        Set<Long> selectedIds = new HashSet<>();
+        Cursor c = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", NULL, " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_SELECTED + ">0 OR " + COL_IS_DIR + "=1", null);
+        if (c != null) {
+            while (c.moveToNext()) {
+                RecoveredEntry entry = cursorToEntry(c);
                 nodeMap.put(entry.getId(), entry);
-                if (entry.isSelected() || entry.isPartial()) {
-                    selectedIds.add(entry.getId());
-                    long pId = entry.getParentId();
-                    while (pId != 0) {
-                        ancestorIds.add(pId);
-                        RecoveredEntry parentEntry = nodeMap.get(pId);
-                        if (parentEntry != null) {
-                            pId = parentEntry.getParentId();
-                        } else {
-                            break;
-                        }
-                    }
-                }
+                if (entry.isSelected() || entry.isPartial()) selectedIds.add(entry.getId());
             }
-            cSel.close();
+            c.close();
         }
 
-        List<Long> neededIds = new ArrayList<>(selectedIds);
-        for (long aId : ancestorIds) {
-            if (!nodeMap.containsKey(aId)) {
-                neededIds.add(aId);
+        Set<Long> neededIds = new HashSet<>(selectedIds);
+        for (long selectedId : selectedIds) {
+            RecoveredEntry selected = nodeMap.get(selectedId);
+            long parentId = selected != null ? selected.getParentId() : 0;
+            Set<Long> visited = new HashSet<>();
+            while (parentId != 0 && visited.add(parentId)) {
+                RecoveredEntry parent = nodeMap.get(parentId);
+                if (parent == null) break;
+                neededIds.add(parentId);
+                parentId = parent.getParentId();
             }
         }
 
-        if (!neededIds.isEmpty()) {
-            for (int i = 0; i < neededIds.size(); i += 500) {
-                int end = Math.min(i + 500, neededIds.size());
-                List<Long> subList = neededIds.subList(i, end);
-                StringBuilder sb = new StringBuilder();
-                for (int j = 0; j < subList.size(); j++) {
-                    if (j > 0) sb.append(",");
-                    sb.append(subList.get(j));
-                }
-
-                Cursor cChunk = db.rawQuery("SELECT " + COL_ID + ", " + COL_PARENT_ID + ", " + COL_NAME + ", " + COL_PATH + ", " + COL_OFFSET + ", " + COL_SIZE + ", " + COL_TYPE + ", " + COL_IS_DIR + ", " + COL_MODIFIED + ", " + COL_SELECTED + ", NULL, " + COL_UNREADABLE + ", " + COL_UNREADABLE_REASON + ", " + COL_FIRST_CLUSTER + ", " + COL_RESTORE_STATUS + ", " + COL_CATEGORY + ", " + COL_FILE_COUNT + ", " + COL_TOTAL_SIZE + " FROM " + TABLE_NODES + " WHERE " + COL_ID + " IN (" + sb.toString() + ")", null);
-                if (cChunk != null) {
-                    while (cChunk.moveToNext()) {
-                        list.add(cursorToEntry(cChunk));
-                    }
-                    cChunk.close();
-                }
-            }
+        for (long id : neededIds) {
+            RecoveredEntry entry = nodeMap.get(id);
+            if (entry != null) list.add(entry);
         }
 
         PerformanceLogger.record("getEntriesForFilteredRestore", System.currentTimeMillis() - start);

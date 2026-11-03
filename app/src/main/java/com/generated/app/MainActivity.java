@@ -171,10 +171,10 @@ public class MainActivity extends Activity {
         requestNotificationPermissionIfNeeded();
 
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
-        getWindow().setStatusBarColor(0xFF0D47A1);
+        getWindow().setStatusBarColor(0xFF102A43);
 
         final android.widget.ScrollView rootLayout = new android.widget.ScrollView(this);
-        rootLayout.setBackgroundColor(0xFFF4F7FB);
+        rootLayout.setBackgroundColor(0xFFF3F6FB);
         rootLayout.setFillViewport(true);
 
         LinearLayout contentContainer = new LinearLayout(this);
@@ -186,19 +186,33 @@ public class MainActivity extends Activity {
         // ---- header: gradient with the title and two small buttons
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setPadding(dp(20), dp(16), dp(20), dp(64));
+        header.setPadding(dp(22), dp(20), dp(22), dp(68));
         GradientDrawable headerBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{0xFF0D47A1, 0xFF1E88E5});
+                new int[]{0xFF102A43, 0xFF1565C0});
         headerBg.setCornerRadii(new float[]{0, 0, 0, 0, dp(28), dp(28), dp(28), dp(28)});
         header.setBackground(headerBg);
         contentContainer.addView(header, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText(R.string.app_name);
+        tvTitle.setTextSize(30);
+        tvTitle.setTextColor(0xFFFFFFFF);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvTitle.setSingleLine(true);
+        tvTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tvTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        tvTitle.setTextDirection(View.TEXT_DIRECTION_RTL);
+        header.addView(tvTitle, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
         LinearLayout topRow = new LinearLayout(this);
         topRow.setOrientation(LinearLayout.HORIZONTAL);
-        topRow.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(topRow, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        topRow.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams topRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        topRowLp.topMargin = dp(12);
+        header.addView(topRow, topRowLp);
 
         TextView btnSettings = makePill("הגדרות", new View.OnClickListener() {
             @Override
@@ -219,19 +233,10 @@ public class MainActivity extends Activity {
         helpLp.leftMargin = dp(8);
         topRow.addView(btnHelp, helpLp);
 
-        topRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1.0f));
-
-        TextView tvTitle = new TextView(this);
-        tvTitle.setText(R.string.app_name);
-        tvTitle.setTextSize(26);
-        tvTitle.setTextColor(0xFFFFFFFF);
-        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        topRow.addView(tvTitle);
-
         TextView tvTagline = new TextView(this);
         tvTagline.setText("הצלת קבצים מכרטיס שמבקש פירמוט");
         tvTagline.setTextSize(14);
-        tvTagline.setTextColor(0xD9FFFFFF);
+        tvTagline.setTextColor(0xE6FFFFFF);
         tvTagline.setGravity(Gravity.RIGHT);
         tvTagline.setTextDirection(View.TEXT_DIRECTION_RTL);
         LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(
@@ -251,11 +256,11 @@ public class MainActivity extends Activity {
         iconCircle = new FrameLayout(this);
         GradientDrawable circleBg = new GradientDrawable();
         circleBg.setShape(GradientDrawable.OVAL);
-        circleBg.setColor(0xFFE3F2FD);
+        circleBg.setColor(0xFFE6F4FF);
         iconCircle.setBackground(circleBg);
         ivStatusIcon = new ImageView(this);
         ivStatusIcon.setImageResource(R.drawable.ic_sd_card);
-        ivStatusIcon.setColorFilter(0xFF1976D2);
+        ivStatusIcon.setColorFilter(0xFF1565C0);
         iconCircle.addView(ivStatusIcon, new FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER));
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(68), dp(68));
         iconLp.gravity = Gravity.RIGHT;
@@ -267,7 +272,7 @@ public class MainActivity extends Activity {
         tvStatusTitle = new TextView(this);
         tvStatusTitle.setText(R.string.connect_card_prompt);
         tvStatusTitle.setTextSize(20);
-        tvStatusTitle.setTextColor(0xFF1F2937);
+        tvStatusTitle.setTextColor(0xFF102A43);
         tvStatusTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         tvStatusTitle.setGravity(Gravity.RIGHT);
         tvStatusTitle.setTextDirection(View.TEXT_DIRECTION_RTL);
@@ -629,9 +634,9 @@ public class MainActivity extends Activity {
         card.setPadding(dp(20), dp(20), dp(20), dp(20));
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(0xFFFFFFFF);
-        bg.setCornerRadius(dp(20));
+        bg.setCornerRadius(dp(24));
         card.setBackground(bg);
-        card.setElevation(dp(4));
+        card.setElevation(dp(5));
         return card;
     }
 
@@ -643,14 +648,14 @@ public class MainActivity extends Activity {
         b.setTypeface(null, android.graphics.Typeface.BOLD);
         b.setStateListAnimator(null);
         GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(14));
+        bg.setCornerRadius(dp(16));
         if (primary) {
-            bg.setColor(0xFF1976D2);
+            bg.setColor(0xFF1565C0);
             b.setTextColor(0xFFFFFFFF);
         } else {
             bg.setColor(0xFFFFFFFF);
-            bg.setStroke(dp(1.5f), 0xFF1976D2);
-            b.setTextColor(0xFF1976D2);
+            bg.setStroke(dp(1.5f), 0xFF1565C0);
+            b.setTextColor(0xFF1565C0);
         }
         b.setBackground(bg);
         return b;
@@ -663,7 +668,7 @@ public class MainActivity extends Activity {
         t.setTextColor(0xFFFFFFFF);
         t.setPadding(dp(14), dp(8), dp(14), dp(8));
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0x33FFFFFF);
+        bg.setColor(0x26FFFFFF);
         bg.setCornerRadius(dp(18));
         t.setBackground(bg);
         t.setOnClickListener(l);

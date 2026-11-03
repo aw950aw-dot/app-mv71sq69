@@ -58,6 +58,7 @@ public class RestoreService extends Service {
     private static int restoredFilesCount = 0;
     private static int failedFilesCount = 0;
     private static int skippedExistingFilesCount = 0;
+    private static int replacedFilesCount = 0;
     private static int foldersCreatedCount = 0;
     private static int foldersReusedCount = 0;
     private static int totalFilesCount = 0;
@@ -131,6 +132,7 @@ public class RestoreService extends Service {
                     restoredFilesCount = 0;
                     failedFilesCount = 0;
                     skippedExistingFilesCount = 0;
+                    replacedFilesCount = 0;
                     foldersCreatedCount = 0;
                     foldersReusedCount = 0;
                     currentBytesRestored = 0;
@@ -266,14 +268,14 @@ public class RestoreService extends Service {
 
                 List<RecoveredEntry> topLevelItems = new ArrayList<>();
                 for (RecoveredEntry e : allEntries) {
-                    boolean isSelected = saveAll || e.isSelected() || e.isPartial();
+                    boolean isSelected = saveAll || e.isSelected();
                     if (!isSelected) continue;
 
                     boolean hasSelectedAncestor = false;
                     long currParentId = e.getParentId();
                     while (currParentId != 0 && entryMap.containsKey(currParentId)) {
                         RecoveredEntry parentEntry = entryMap.get(currParentId);
-                        if (parentEntry != null && (saveAll || parentEntry.isSelected() || parentEntry.isPartial())) {
+                        if (parentEntry != null && (saveAll || parentEntry.isSelected())) {
                             hasSelectedAncestor = true;
                             break;
                         }
@@ -281,6 +283,8 @@ public class RestoreService extends Service {
                     }
 
                     if (!hasSelectedAncestor) {
+                        // Restore the selected item itself. Unselected ancestors are
+                        // intentionally omitted; selected folders retain their children.
                         topLevelItems.add(e);
                     }
                 }
@@ -530,7 +534,11 @@ public class RestoreService extends Service {
                     dbHelper.clearRestoreQueue();
                 }
 
-                dbHelper.updateJobState("restore", "COMPLETED", startTime, System.currentTimeMillis(), foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
+                if (isCancelled) {
+                    dbHelper.updateJobState("restore", "CANCELLED", startTime, System.currentTimeMillis(), foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
+                } else {
+                    dbHelper.updateJobState("restore", "COMPLETED", startTime, System.currentTimeMillis(), foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
+                }
                 finishRestore(restoredFilesCount, failedFilesCount, skippedExistingFilesCount, errorLogs);
             }
         });
@@ -572,6 +580,7 @@ public class RestoreService extends Service {
         final boolean followChain = fat32Volume != null && node.getFirstCluster() >= 2;
 
         String sanitizedName = sanitizeFileName(node.getName());
+        boolean replacingExisting = false;
         DocumentFileCompat existing = parentDoc.findFile(sanitizedName);
         if (existing != null) {
             boolean sameSize = false;
@@ -587,6 +596,7 @@ public class RestoreService extends Service {
                     throw new Exception("לא ניתן להחליף את הקובץ הקיים (המחיקה נכשלה)");
                 }
                 parentDoc.forget(sanitizedName);
+                replacingExisting = true;
             } else if (conflictPolicy == POLICY_LEGACY && sameSize) {
                 return true;
             }
@@ -667,6 +677,7 @@ public class RestoreService extends Service {
             throw new Exception("File write failed validation.");
         }
 
+        if (replacingExisting) replacedFilesCount++;
         return false;
     }
 
@@ -695,6 +706,7 @@ public class RestoreService extends Service {
         Intent intent = new Intent(ACTION_PROGRESS);
         intent.putExtra("restored", restoredFilesCount);
         intent.putExtra("skipped", skippedExistingFilesCount);
+        intent.putExtra("replaced", replacedFilesCount);
         intent.putExtra("failed", failedFilesCount);
         intent.putExtra("total", totalFilesCount);
         intent.putExtra("percent", currentPercent);
@@ -726,7 +738,11 @@ public class RestoreService extends Service {
             dbHelper.setAllSelected(false);
         }
 
-        ServiceState.getInstance().update(ServiceState.Phase.RESTORE_COMPLETED, success, 0, currentBytesRestored, "", 100, "", "");
+        if (isCancelled) {
+            ServiceState.getInstance().update(ServiceState.Phase.CANCELLED, success, 0, currentBytesRestored, currentFileName, currentPercent, currentEtaText, "שחזור בוטל");
+        } else {
+            ServiceState.getInstance().update(ServiceState.Phase.RESTORE_COMPLETED, success, 0, currentBytesRestored, "", 100, "", "");
+        }
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
@@ -742,8 +758,10 @@ public class RestoreService extends Service {
                 builder = new Notification.Builder(this);
             }
 
-            String summaryMsg = String.format(Locale.getDefault(), "השחזור הסתיים: %d שוחזרו, %d דולגו, %d נכשלו", success, skipped, failed);
-            builder.setContentTitle("SD Rescue - שחזור הושלם")
+            String summaryMsg = isCancelled
+                    ? String.format(Locale.getDefault(), "השחזור בוטל: %d שוחזרו, %d דולגו, %d נכשלו", success, skipped, failed)
+                    : String.format(Locale.getDefault(), "השחזור הסתיים: %d שוחזרו, %d דולגו, %d נכשלו", success, skipped, failed);
+            builder.setContentTitle(isCancelled ? "SD Rescue - השחזור בוטל" : "SD Rescue - שחזור הושלם")
                     .setContentText(summaryMsg)
                     .setSmallIcon(android.R.drawable.ic_menu_info_details)
                     .setContentIntent(pendingIntent)
@@ -756,6 +774,7 @@ public class RestoreService extends Service {
         intent.putExtra("success", success);
         intent.putExtra("failed", failed);
         intent.putExtra("skipped", skipped);
+        intent.putExtra("replaced", replacedFilesCount);
         intent.putExtra("folders_created", foldersCreatedCount);
         intent.putExtra("folders_reused", foldersReusedCount);
         sendBroadcast(intent);

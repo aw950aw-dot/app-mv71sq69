@@ -158,9 +158,10 @@ public class ScanActivity extends Activity {
                     int success = intent.getIntExtra("success", 0);
                     int failed = intent.getIntExtra("failed", 0);
                     int skipped = intent.getIntExtra("skipped", 0);
+                    int replaced = intent.getIntExtra("replaced", 0);
                     int foldersCreated = intent.getIntExtra("folders_created", 0);
                     int foldersReused = intent.getIntExtra("folders_reused", 0);
-                    showRestoreSummaryDialogAfterService(success, failed, skipped, foldersCreated, foldersReused);
+                    showRestoreSummaryDialogAfterService(success, failed, skipped, replaced, foldersCreated, foldersReused);
                 }
             } catch (Exception ignored) {}
         }
@@ -760,7 +761,11 @@ public class ScanActivity extends Activity {
         btnSelectAllBrowser.setOnClickListener(v -> {
             browserLoadingProgress.setVisibility(View.VISIBLE);
             new Thread(() -> {
-                dbHelper.setAllSelected(true);
+                if (currentDirPath == null || currentDirPath.equals("/")) {
+                    dbHelper.setAllSelected(true);
+                } else {
+                    dbHelper.setDirectoryContentsSelected(currentParentId, 1);
+                }
                 updateSelectionCounterAndBottomBar();
                 currentOffset = 0;
                 hasMoreData = true;
@@ -772,7 +777,11 @@ public class ScanActivity extends Activity {
         btnDeselectAllBrowser.setOnClickListener(v -> {
             browserLoadingProgress.setVisibility(View.VISIBLE);
             new Thread(() -> {
-                dbHelper.setAllSelected(false);
+                if (currentDirPath == null || currentDirPath.equals("/")) {
+                    dbHelper.setAllSelected(false);
+                } else {
+                    dbHelper.setDirectoryContentsSelected(currentParentId, 0);
+                }
                 updateSelectionCounterAndBottomBar();
                 currentOffset = 0;
                 hasMoreData = true;
@@ -1263,11 +1272,12 @@ public class ScanActivity extends Activity {
         }).start();
     }
 
-    private void showRestoreSummaryDialogAfterService(int success, int failed, int skipped, int foldersCreated, int foldersReused) {
+    private void showRestoreSummaryDialogAfterService(int success, int failed, int skipped, int replaced, int foldersCreated, int foldersReused) {
         StringBuilder sb = new StringBuilder();
         sb.append("סיכום תהליך שחזור:\n\n");
         sb.append("• קבצים ששוחזרו בהצלחה: ").append(success).append("\n");
         sb.append("• קבצים שדולגו (כבר קיימים): ").append(skipped).append("\n");
+        sb.append("• קבצים שהוחלפו: ").append(replaced).append("\n");
         sb.append("• קבצים שנכשלו: ").append(failed).append("\n");
         sb.append("• תיקיות שנוצרו: ").append(foldersCreated).append("\n");
         sb.append("• תיקיות שנעשה בהן שימוש חוזר: ").append(foldersReused).append("\n\n");
