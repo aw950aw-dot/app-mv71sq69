@@ -760,7 +760,11 @@ public class ScanActivity extends Activity {
         btnSelectAllBrowser.setOnClickListener(v -> {
             browserLoadingProgress.setVisibility(View.VISIBLE);
             new Thread(() -> {
-                dbHelper.setAllSelected(true);
+                if (currentDirPath == null || currentDirPath.equals("/")) {
+                    dbHelper.setAllSelected(true);
+                } else {
+                    dbHelper.setDirectoryContentsSelected(currentParentId, 1);
+                }
                 updateSelectionCounterAndBottomBar();
                 currentOffset = 0;
                 hasMoreData = true;
@@ -772,7 +776,11 @@ public class ScanActivity extends Activity {
         btnDeselectAllBrowser.setOnClickListener(v -> {
             browserLoadingProgress.setVisibility(View.VISIBLE);
             new Thread(() -> {
-                dbHelper.setAllSelected(false);
+                if (currentDirPath == null || currentDirPath.equals("/")) {
+                    dbHelper.setAllSelected(false);
+                } else {
+                    dbHelper.setDirectoryContentsSelected(currentParentId, 0);
+                }
                 updateSelectionCounterAndBottomBar();
                 currentOffset = 0;
                 hasMoreData = true;
