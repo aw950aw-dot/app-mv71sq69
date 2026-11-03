@@ -133,7 +133,7 @@ public final class Fat32Volume {
         int reserved = le16(b, 14);
         int fats = b[16] & 0xFF;
         long spf = le32(b, 36);
-        long rootCluster = le32(b, 44) & 0xFFFF;
+        long rootCluster = le32(b, 44) & 0x0FFFFFFFL;
         return (bps == 512 || bps == 1024 || bps == 2048 || bps == 4096)
                 && spc > 0 && reserved > 0 && fats > 0 && spf > 0 && rootCluster >= 2;
     }
