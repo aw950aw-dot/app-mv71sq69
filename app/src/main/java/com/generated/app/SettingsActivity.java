@@ -46,7 +46,7 @@ public class SettingsActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
-        root.setBackgroundColor(0xFFF8F9FA);
+        root.setBackgroundColor(0xFFF3F6FB);
 
         int pad = (int) (16 * getResources().getDisplayMetrics().density);
 
@@ -55,7 +55,11 @@ public class SettingsActivity extends Activity {
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(pad, pad, pad, pad);
-        topBar.setBackgroundColor(0xFFFFFFFF);
+        android.graphics.drawable.GradientDrawable appBarBg = new android.graphics.drawable.GradientDrawable();
+        appBarBg.setColor(0xFFFFFFFF);
+        appBarBg.setCornerRadius(dp(20));
+        topBar.setBackground(appBarBg);
+        topBar.setElevation(dp(2));
         root.addView(topBar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -90,6 +94,8 @@ public class SettingsActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(pad, pad, pad, pad);
+        scrollView.setClipToPadding(false);
+        content.setPadding(pad, pad, pad, dp(24));
         scrollView.addView(content, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -397,11 +403,15 @@ public class SettingsActivity extends Activity {
         android.util.Log.d("Lifecycle", "SettingsActivity onResume. Screen chosen: SettingsActivity");
     }
 
+    private int dp(float value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
     private void addSectionHeader(LinearLayout parent, String title) {
         TextView tv = new TextView(this);
         tv.setText(title);
         tv.setTextSize(16);
-        tv.setTextColor(0xFF1976D2);
+        tv.setTextColor(0xFF1565C0);
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -417,7 +427,11 @@ public class SettingsActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (14 * getResources().getDisplayMetrics().density);
         card.setPadding(pad, pad, pad, pad);
-        card.setBackgroundColor(0xFFFFFFFF);
+        android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
+        cardBg.setColor(0xFFFFFFFF);
+        cardBg.setCornerRadius(dp(18));
+        card.setBackground(cardBg);
+        card.setElevation(dp(2));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
