@@ -281,17 +281,9 @@ public class RestoreService extends Service {
                     }
 
                     if (!hasSelectedAncestor) {
-                        if (!saveAll && e.isDirectory()) {
-                            // Treat the selected directory as a selection container:
-                            // restore its contents at the destination root, not the wrapper directory.
-                            for (RecoveredEntry child : allEntries) {
-                                if (child.getParentId() == e.getId()) {
-                                    topLevelItems.add(child);
-                                }
-                            }
-                        } else {
-                            topLevelItems.add(e);
-                        }
+                        // Restore the selected item itself. Unselected ancestors are
+                        // intentionally omitted; selected folders retain their children.
+                        topLevelItems.add(e);
                     }
                 }
 
