@@ -530,7 +530,11 @@ public class RestoreService extends Service {
                     dbHelper.clearRestoreQueue();
                 }
 
-                dbHelper.updateJobState("restore", "COMPLETED", startTime, System.currentTimeMillis(), foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
+                if (isCancelled) {
+                    dbHelper.updateJobState("restore", "CANCELLED", startTime, System.currentTimeMillis(), foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
+                } else {
+                    dbHelper.updateJobState("restore", "COMPLETED", startTime, System.currentTimeMillis(), foldersCreatedCount + foldersReusedCount, restoredFilesCount, currentBytesRestored);
+                }
                 finishRestore(restoredFilesCount, failedFilesCount, skippedExistingFilesCount, errorLogs);
             }
         });
@@ -726,7 +730,11 @@ public class RestoreService extends Service {
             dbHelper.setAllSelected(false);
         }
 
-        ServiceState.getInstance().update(ServiceState.Phase.RESTORE_COMPLETED, success, 0, currentBytesRestored, "", 100, "", "");
+        if (isCancelled) {
+            ServiceState.getInstance().update(ServiceState.Phase.CANCELLED, success, 0, currentBytesRestored, currentFileName, currentPercent, currentEtaText, "שחזור בוטל");
+        } else {
+            ServiceState.getInstance().update(ServiceState.Phase.RESTORE_COMPLETED, success, 0, currentBytesRestored, "", 100, "", "");
+        }
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
@@ -742,8 +750,10 @@ public class RestoreService extends Service {
                 builder = new Notification.Builder(this);
             }
 
-            String summaryMsg = String.format(Locale.getDefault(), "השחזור הסתיים: %d שוחזרו, %d דולגו, %d נכשלו", success, skipped, failed);
-            builder.setContentTitle("SD Rescue - שחזור הושלם")
+            String summaryMsg = isCancelled
+                    ? String.format(Locale.getDefault(), "השחזור בוטל: %d שוחזרו, %d דולגו, %d נכשלו", success, skipped, failed)
+                    : String.format(Locale.getDefault(), "השחזור הסתיים: %d שוחזרו, %d דולגו, %d נכשלו", success, skipped, failed);
+            builder.setContentTitle(isCancelled ? "SD Rescue - השחזור בוטל" : "SD Rescue - שחזור הושלם")
                     .setContentText(summaryMsg)
                     .setSmallIcon(android.R.drawable.ic_menu_info_details)
                     .setContentIntent(pendingIntent)
