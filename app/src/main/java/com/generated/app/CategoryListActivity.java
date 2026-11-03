@@ -56,16 +56,17 @@ public class CategoryListActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT));
-        root.setBackgroundColor(0xFFF8F9FA);
+        root.setBackgroundColor(0xFFF3F6FB);
 
         int pad = (int) (16 * getResources().getDisplayMetrics().density);
 
         TextView tvTitle = new TextView(this);
         tvTitle.setText("פילוח קבצים לפי קטגוריות");
-        tvTitle.setTextSize(22);
-        tvTitle.setTextColor(0xFF1976D2);
+        tvTitle.setTextSize(23);
+        tvTitle.setTextColor(0xFF12345A);
         tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         tvTitle.setGravity(Gravity.CENTER);
+        tvTitle.setPadding(0, dp(8), 0, dp(8));
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -74,6 +75,11 @@ public class CategoryListActivity extends Activity {
         root.addView(tvTitle, titleParams);
 
         listView = new ListView(this);
+        listView.setDivider(new android.graphics.drawable.ColorDrawable(0x00000000));
+        listView.setDividerHeight(dp(12));
+        listView.setPadding(dp(16), dp(4), dp(16), dp(20));
+        listView.setClipToPadding(false);
+        listView.setSelector(android.R.color.transparent);
         root.addView(listView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -142,18 +148,26 @@ public class CategoryListActivity extends Activity {
                 itemLayout.setOrientation(LinearLayout.VERTICAL);
                 int pad = (int) (14 * getResources().getDisplayMetrics().density);
                 itemLayout.setPadding(pad, pad, pad, pad);
-                itemLayout.setBackgroundColor(0xFFFFFFFF);
+                android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
+                cardBg.setColor(0xFFFFFFFF);
+                cardBg.setCornerRadius(dp(18));
+                itemLayout.setBackground(cardBg);
+                itemLayout.setElevation(dp(2));
+                itemLayout.setMinimumHeight(dp(76));
 
                 TextView tvName = new TextView(CategoryListActivity.this);
-                tvName.setTextSize(16);
-                tvName.setTextColor(0xFF333333);
+                tvName.setTextSize(17);
+                tvName.setTextColor(0xFF172B4D);
                 tvName.setTypeface(null, android.graphics.Typeface.BOLD);
                 itemLayout.addView(tvName);
 
                 TextView tvMeta = new TextView(CategoryListActivity.this);
                 tvMeta.setTextSize(13);
-                tvMeta.setTextColor(0xFF757575);
-                itemLayout.addView(tvMeta);
+                tvMeta.setTextColor(0xFF6B7A90);
+                LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                metaLp.topMargin = dp(5);
+                itemLayout.addView(tvMeta, metaLp);
 
                 itemLayout.setTag(new Holder(tvName, tvMeta));
             } else {
@@ -184,6 +198,10 @@ public class CategoryListActivity extends Activity {
         final String[] units = new String[]{"בייט", "קילובייט", "מגהבייט", "ג׳יגהבייט", "טרהבייט"};
         int digitGroups = (int) (Math.log10(sizeBytes) / Math.log10(1024));
         return String.format(Locale.getDefault(), "%.2f %s", sizeBytes / Math.pow(1024, digitGroups), units[digitGroups]);
+    }
+
+    private int dp(float value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     @Override
