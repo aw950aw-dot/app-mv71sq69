@@ -1277,6 +1277,7 @@ public class ScanActivity extends Activity {
         sb.append("סיכום תהליך שחזור:\n\n");
         sb.append("• קבצים ששוחזרו בהצלחה: ").append(success).append("\n");
         sb.append("• קבצים שדולגו (כבר קיימים): ").append(skipped).append("\n");
+        sb.append("• קבצים שהוחלפו: ").append(replaced).append("\n");
         sb.append("• קבצים שנכשלו: ").append(failed).append("\n");
         sb.append("• תיקיות שנוצרו: ").append(foldersCreated).append("\n");
         sb.append("• תיקיות שנעשה בהן שימוש חוזר: ").append(foldersReused).append("\n\n");
