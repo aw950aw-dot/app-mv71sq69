@@ -266,14 +266,14 @@ public class RestoreService extends Service {
 
                 List<RecoveredEntry> topLevelItems = new ArrayList<>();
                 for (RecoveredEntry e : allEntries) {
-                    boolean isSelected = saveAll || e.isSelected() || e.isPartial();
+                    boolean isSelected = saveAll || e.isSelected();
                     if (!isSelected) continue;
 
                     boolean hasSelectedAncestor = false;
                     long currParentId = e.getParentId();
                     while (currParentId != 0 && entryMap.containsKey(currParentId)) {
                         RecoveredEntry parentEntry = entryMap.get(currParentId);
-                        if (parentEntry != null && (saveAll || parentEntry.isSelected() || parentEntry.isPartial())) {
+                        if (parentEntry != null && (saveAll || parentEntry.isSelected())) {
                             hasSelectedAncestor = true;
                             break;
                         }
@@ -281,7 +281,17 @@ public class RestoreService extends Service {
                     }
 
                     if (!hasSelectedAncestor) {
-                        topLevelItems.add(e);
+                        if (!saveAll && e.isDirectory()) {
+                            // Treat the selected directory as a selection container:
+                            // restore its contents at the destination root, not the wrapper directory.
+                            for (RecoveredEntry child : allEntries) {
+                                if (child.getParentId() == e.getId()) {
+                                    topLevelItems.add(child);
+                                }
+                            }
+                        } else {
+                            topLevelItems.add(e);
+                        }
                     }
                 }
 
