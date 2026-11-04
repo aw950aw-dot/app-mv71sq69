@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- GoatCounter site code (the part before .goatcounter.com). Leave empty to disable. -->
+    <string name="rs_stats_site" translatable="false"></string>
+</resources>
